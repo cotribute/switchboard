@@ -13,7 +13,9 @@
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import express, { Request, Response, NextFunction } from 'express';
+import { randomUUID } from 'crypto';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -3269,10 +3271,8 @@ class FrontappMCPServer {
     return response.data;
   }
 
-  async run(): Promise<void> {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    console.error('Frontapp MCP server running on stdio');
+  getServer(): Server {
+    return this.server;
   }
 }
 
@@ -3284,5 +3284,77 @@ if (!apiToken) {
   process.exit(1);
 }
 
-const server = new FrontappMCPServer(apiToken);
-server.run().catch(console.error);
+const mcpApiKey = process.env.MCP_API_KEY;
+
+const frontapp = new FrontappMCPServer(apiToken);
+const app = express();
+
+app.use(express.json());
+
+// Health check (no auth required)
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ status: 'ok', server: 'frontapp-mcp-server' });
+});
+
+// Auth middleware for MCP endpoint
+function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+  if (!mcpApiKey) {
+    // No MCP_API_KEY set — skip auth (useful for local dev)
+    next();
+    return;
+  }
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (token !== mcpApiKey) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  next();
+}
+
+// Track transports by session ID for stateful connections
+const transports = new Map<string, StreamableHTTPServerTransport>();
+
+// MCP endpoint — handles POST (client messages) and GET (SSE stream) and DELETE (session teardown)
+app.all('/mcp', authMiddleware, async (req: Request, res: Response) => {
+  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+  if (req.method === 'POST' && !sessionId) {
+    // New session — create a transport and connect it to the MCP server
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+    });
+
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        transports.delete(transport.sessionId);
+      }
+    };
+
+    await frontapp.getServer().connect(transport);
+
+    if (transport.sessionId) {
+      transports.set(transport.sessionId, transport);
+    }
+
+    await transport.handleRequest(req, res, req.body);
+    return;
+  }
+
+  // Existing session — look up the transport
+  if (sessionId) {
+    const transport = transports.get(sessionId);
+    if (!transport) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    await transport.handleRequest(req, res, req.body);
+    return;
+  }
+
+  res.status(400).json({ error: 'Missing mcp-session-id header' });
+});
+
+const port = parseInt(process.env.PORT || '3000', 10);
+app.listen(port, () => {
+  console.log(`Frontapp MCP server listening on port ${port}`);
+});
