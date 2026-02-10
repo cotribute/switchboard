@@ -3319,22 +3319,21 @@ app.all('/mcp', authMiddleware, async (req: Request, res: Response) => {
 
   if (req.method === 'POST' && !sessionId) {
     // New session — create a new MCP server + transport pair (Server is 1:1 with transport)
+    const newSessionId = randomUUID();
     const frontapp = new FrontappMCPServer(apiToken);
     const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
+      sessionIdGenerator: () => newSessionId,
     });
 
     transport.onclose = () => {
-      if (transport.sessionId) {
-        transports.delete(transport.sessionId);
-      }
+      transports.delete(newSessionId);
     };
 
     await frontapp.getServer().connect(transport);
 
-    if (transport.sessionId) {
-      transports.set(transport.sessionId, transport);
-    }
+    // Store BEFORE handleRequest — handleRequest may hold the connection open for SSE
+    // and not resolve, so we must register the session first.
+    transports.set(newSessionId, transport);
 
     await transport.handleRequest(req, res, req.body);
     return;
