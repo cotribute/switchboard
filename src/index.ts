@@ -3295,15 +3295,15 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', server: 'frontapp-mcp-server' });
 });
 
-// Auth middleware for MCP endpoint
+// Auth middleware for MCP endpoint — accepts Bearer header OR token in URL path
 function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   if (!mcpApiKey) {
-    // No MCP_API_KEY set — skip auth (useful for local dev)
     next();
     return;
   }
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (token !== mcpApiKey) {
+  const headerToken = req.headers.authorization?.replace('Bearer ', '');
+  const pathToken = req.params.token;
+  if (headerToken !== mcpApiKey && pathToken !== mcpApiKey) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
@@ -3313,8 +3313,8 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
 // Track transports by session ID for stateful connections
 const transports = new Map<string, StreamableHTTPServerTransport>();
 
-// MCP endpoint — handles POST (client messages) and GET (SSE stream) and DELETE (session teardown)
-app.all('/mcp', authMiddleware, async (req: Request, res: Response) => {
+// MCP handler shared by both routes
+async function handleMcp(req: Request, res: Response) {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
   if (req.method === 'POST' && !sessionId) {
@@ -3351,7 +3351,12 @@ app.all('/mcp', authMiddleware, async (req: Request, res: Response) => {
   }
 
   res.status(400).json({ error: 'Missing mcp-session-id header' });
-});
+}
+
+// /mcp — auth via Authorization header (Claude Code)
+app.all('/mcp', authMiddleware, handleMcp);
+// /mcp/:token — auth via URL path (Claude Desktop / Cowork connectors)
+app.all('/mcp/:token', authMiddleware, handleMcp);
 
 const port = parseInt(process.env.PORT || '3000', 10);
 app.listen(port, () => {
