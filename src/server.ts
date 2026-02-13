@@ -11,13 +11,17 @@ import { tools as frontappTools } from "./frontapp/tools.js";
 import { createHandlers as createFrontappHandlers } from "./frontapp/handlers.js";
 import { tools as pipedriveTools } from "./pipedrive/tools.js";
 import { createHandlers as createPipedriveHandlers } from "./pipedrive/handlers.js";
+import { tools as dealfrontTools } from "./dealfront/tools.js";
+import { createHandlers as createDealfrontHandlers } from "./dealfront/handlers.js";
 
 export type ModuleScope =
   | "all"
   | "frontapp"
   | "pipedrive"
+  | "dealfront"
   | "frontapp-lite"
-  | "pipedrive-lite";
+  | "pipedrive-lite"
+  | "dealfront-lite";
 
 // Read-only tool whitelists for lite scopes (saves ~80% of context tokens)
 const FRONTAPP_LITE_TOOLS = new Set([
@@ -65,10 +69,25 @@ const PIPEDRIVE_LITE_TOOLS = new Set([
   "list_organization_fields",
 ]);
 
+const DEALFRONT_LITE_TOOLS = new Set([
+  "dealfront_list_accounts",
+  "dealfront_get_account",
+  "dealfront_list_leads",
+  "dealfront_get_lead",
+  "dealfront_list_lead_visits",
+  "dealfront_list_visits",
+  "dealfront_list_custom_feeds",
+  "dealfront_list_custom_feed_leads",
+  "dealfront_get_export_status",
+  "dealfront_enrich_ip",
+]);
+
 export class CotributeMCPServer {
   private server: Server;
   private frontappAxios: AxiosInstance | null;
   private pipedriveAxios: AxiosInstance | null;
+  private dealfrontAxios: AxiosInstance | null;
+  private dealfrontIpEnrichAxios: AxiosInstance | null;
   private handlers: Record<string, (args: any) => Promise<any>>;
   private scope: ModuleScope;
 
@@ -76,7 +95,9 @@ export class CotributeMCPServer {
     frontappToken: string,
     pipedriveToken?: string,
     pipedriveDomain?: string,
-    scope: ModuleScope = "all"
+    scope: ModuleScope = "all",
+    dealfrontToken?: string,
+    dealfrontIpEnrichKey?: string
   ) {
     this.scope = scope;
     this.server = new Server(
@@ -87,11 +108,15 @@ export class CotributeMCPServer {
     this.handlers = {};
     this.frontappAxios = null;
     this.pipedriveAxios = null;
+    this.dealfrontAxios = null;
+    this.dealfrontIpEnrichAxios = null;
 
     const includeFrontapp =
       scope === "all" || scope === "frontapp" || scope === "frontapp-lite";
     const includePipedrive =
       scope === "all" || scope === "pipedrive" || scope === "pipedrive-lite";
+    const includeDealfront =
+      scope === "all" || scope === "dealfront" || scope === "dealfront-lite";
 
     // Front.app module
     if (includeFrontapp) {
@@ -120,6 +145,35 @@ export class CotributeMCPServer {
       );
     }
 
+    // Dealfront module
+    if (includeDealfront && dealfrontToken) {
+      this.dealfrontAxios = axios.create({
+        baseURL: "https://api.leadfeeder.com",
+        headers: {
+          Authorization: `Token token=${dealfrontToken}`,
+          Accept: "application/json",
+        },
+      });
+
+      if (dealfrontIpEnrichKey) {
+        this.dealfrontIpEnrichAxios = axios.create({
+          baseURL: "https://api.lf-discover.com",
+          headers: {
+            "X-API-KEY": dealfrontIpEnrichKey,
+            Accept: "application/json",
+          },
+        });
+      }
+
+      Object.assign(
+        this.handlers,
+        createDealfrontHandlers(
+          this.dealfrontAxios,
+          this.dealfrontIpEnrichAxios
+        )
+      );
+    }
+
     this.setupHandlers();
     this.setupErrorHandling();
   }
@@ -142,11 +196,14 @@ export class CotributeMCPServer {
         ? FRONTAPP_LITE_TOOLS
         : this.scope === "pipedrive-lite"
           ? PIPEDRIVE_LITE_TOOLS
-          : null;
+          : this.scope === "dealfront-lite"
+            ? DEALFRONT_LITE_TOOLS
+            : null;
 
     const allTools = [
       ...(this.frontappAxios ? frontappTools : []),
       ...(this.pipedriveAxios ? pipedriveTools : []),
+      ...(this.dealfrontAxios ? dealfrontTools : []),
     ];
 
     const exposedTools = liteFilter

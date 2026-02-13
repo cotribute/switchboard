@@ -24,6 +24,10 @@ if (pipedriveToken && !pipedriveDomain) {
   process.exit(1);
 }
 
+// Optional Dealfront env vars
+const dealfrontToken = process.env.DEALFRONT_API_TOKEN;
+const dealfrontIpEnrichKey = process.env.DEALFRONT_IP_ENRICH_API_KEY;
+
 const mcpApiKey = process.env.MCP_API_KEY;
 
 const app = express();
@@ -64,7 +68,9 @@ function createMcpHandler(scope: ModuleScope) {
         frontappToken,
         pipedriveToken,
         pipedriveDomain,
-        scope
+        scope,
+        dealfrontToken,
+        dealfrontIpEnrichKey
       );
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
@@ -116,6 +122,17 @@ app.all(
   authMiddleware,
   createMcpHandler("pipedrive-lite")
 );
+// Dealfront lite endpoint
+app.all(
+  "/dealfront-lite/mcp",
+  authMiddleware,
+  createMcpHandler("dealfront-lite")
+);
+app.all(
+  "/dealfront-lite/mcp/:token",
+  authMiddleware,
+  createMcpHandler("dealfront-lite")
+);
 // Full scoped endpoints
 app.all("/frontapp/mcp", authMiddleware, createMcpHandler("frontapp"));
 app.all("/frontapp/mcp/:token", authMiddleware, createMcpHandler("frontapp"));
@@ -125,6 +142,8 @@ app.all(
   authMiddleware,
   createMcpHandler("pipedrive")
 );
+app.all("/dealfront/mcp", authMiddleware, createMcpHandler("dealfront"));
+app.all("/dealfront/mcp/:token", authMiddleware, createMcpHandler("dealfront"));
 // All tools (backwards compatible)
 app.all("/mcp", authMiddleware, createMcpHandler("all"));
 app.all("/mcp/:token", authMiddleware, createMcpHandler("all"));
@@ -133,6 +152,7 @@ const port = parseInt(process.env.PORT || "3000", 10);
 app.listen(port, () => {
   const services = ["Front.app"];
   if (pipedriveToken) services.push("Pipedrive");
+  if (dealfrontToken) services.push("Dealfront");
   console.log(
     `Switchboard MCP server listening on port ${port} (${services.join(" + ")})`
   );
