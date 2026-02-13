@@ -1,7 +1,7 @@
 {
   "name": "switchboard",
   "version": "2.0.0",
-  "description": "Cotribute MCP server — Front.app + Pipedrive tools for Claude",
+  "description": "Cotribute MCP server — Front.app + Pipedrive + Dealfront tools for Claude",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -14,14 +14,16 @@
     "dev": "tsc && node dist/index.js",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "format": "prettier --write \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\"",
-    "format:check": "prettier --check \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\"",
+    "format": "prettier --write \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\"",
+    "format:check": "prettier --check \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\"",
     "heroku-postbuild": "npm run build"
   },
   "keywords": [
     "mcp",
     "frontapp",
     "pipedrive",
+    "dealfront",
+    "leadfeeder",
     "model-context-protocol",
     "claude",
     "switchboard"
