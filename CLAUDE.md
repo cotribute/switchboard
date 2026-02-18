@@ -28,6 +28,9 @@ src/
   google-analytics/
     tools.ts            # Google Analytics tool definitions (6 tools)
     handlers.ts         # GA handlers (axios → analyticsdata/analyticsadmin.googleapis.com)
+  customerio/
+    tools.ts            # Customer.io tool definitions (25 tools)
+    handlers.ts         # Customer.io handlers (axios → api.customer.io/v1)
 ```
 
 **How modules compose:** Each module exports a `tools` array and a `createHandlers(axiosInstance)` function. `server.ts` merges them into a single MCP Server with one `ListToolsRequestSchema` and one `CallToolRequestSchema` handler that dispatches via a merged handler map.
@@ -35,6 +38,8 @@ src/
 Pipedrive tools are only registered when `PIPEDRIVE_API_TOKEN` and `PIPEDRIVE_DOMAIN` env vars are set.
 
 Google Analytics tools are only registered when `GOOGLE_ANALYTICS_CREDENTIALS` env var is set (base64-encoded service account JSON).
+
+Customer.io tools are only registered when `CUSTOMERIO_API_KEY` env var is set.
 
 ## Adding a New Tool
 
@@ -69,6 +74,8 @@ git push heroku master    # Deploy to Heroku
 | `PIPEDRIVE_API_TOKEN` | No | Pipedrive API token |
 | `PIPEDRIVE_DOMAIN` | No* | Pipedrive company subdomain (required if token is set) |
 | `GOOGLE_ANALYTICS_CREDENTIALS` | No | Base64-encoded Google service account JSON for GA4 access |
+| `CUSTOMERIO_API_KEY` | No | Customer.io App API key |
+| `CUSTOMERIO_REGION` | No | Customer.io region: `us` (default) or `eu` |
 
 ## Auth
 

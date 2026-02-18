@@ -20,6 +20,10 @@ const pipedriveDomain = process.env.PIPEDRIVE_DOMAIN;
 // Optional Google Analytics env vars
 const gaCredentials = process.env.GOOGLE_ANALYTICS_CREDENTIALS;
 
+// Optional Customer.io env vars
+const customerioApiKey = process.env.CUSTOMERIO_API_KEY;
+const customerioRegion = process.env.CUSTOMERIO_REGION;
+
 if (pipedriveToken && !pipedriveDomain) {
   console.error(
     "Error: PIPEDRIVE_DOMAIN is required when PIPEDRIVE_API_TOKEN is set"
@@ -68,7 +72,9 @@ function createMcpHandler(scope: ModuleScope) {
         pipedriveToken,
         pipedriveDomain,
         scope,
-        gaCredentials
+        gaCredentials,
+        customerioApiKey,
+        customerioRegion
       );
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
@@ -145,6 +151,23 @@ app.all(
   authMiddleware,
   createMcpHandler("google-analytics")
 );
+// Customer.io endpoints
+app.all(
+  "/customerio-lite/mcp",
+  authMiddleware,
+  createMcpHandler("customerio-lite")
+);
+app.all(
+  "/customerio-lite/mcp/:token",
+  authMiddleware,
+  createMcpHandler("customerio-lite")
+);
+app.all("/customerio/mcp", authMiddleware, createMcpHandler("customerio"));
+app.all(
+  "/customerio/mcp/:token",
+  authMiddleware,
+  createMcpHandler("customerio")
+);
 // Full scoped endpoints
 app.all("/frontapp/mcp", authMiddleware, createMcpHandler("frontapp"));
 app.all("/frontapp/mcp/:token", authMiddleware, createMcpHandler("frontapp"));
@@ -159,6 +182,7 @@ app.listen(port, () => {
   const services = ["Front.app"];
   if (pipedriveToken) services.push("Pipedrive");
   if (gaCredentials) services.push("Google Analytics");
+  if (customerioApiKey) services.push("Customer.io");
   console.log(
     `Switchboard MCP server listening on port ${port} (${services.join(" + ")})`
   );

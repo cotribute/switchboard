@@ -13,6 +13,8 @@ import { tools as pipedriveTools } from "./pipedrive/tools.js";
 import { createHandlers as createPipedriveHandlers } from "./pipedrive/handlers.js";
 import { tools as gaTools } from "./google-analytics/tools.js";
 import { createHandlers as createGAHandlers } from "./google-analytics/handlers.js";
+import { tools as customerioTools } from "./customerio/tools.js";
+import { createHandlers as createCustomerioHandlers } from "./customerio/handlers.js";
 import { GoogleAuth } from "google-auth-library";
 
 export type ModuleScope =
@@ -22,7 +24,9 @@ export type ModuleScope =
   | "frontapp-lite"
   | "pipedrive-lite"
   | "google-analytics"
-  | "google-analytics-lite";
+  | "google-analytics-lite"
+  | "customerio"
+  | "customerio-lite";
 
 // Read-only tool whitelists for lite scopes (saves ~80% of context tokens)
 const FRONTAPP_LITE_TOOLS = new Set([
@@ -76,12 +80,28 @@ const GA_LITE_TOOLS = new Set([
   "ga_get_metadata",
 ]);
 
+const CUSTOMERIO_LITE_TOOLS = new Set([
+  "cio_search_customers",
+  "cio_get_customer_attributes",
+  "cio_get_customer_segments",
+  "cio_list_segments",
+  "cio_get_segment",
+  "cio_get_segment_membership",
+  "cio_list_campaigns",
+  "cio_get_campaign",
+  "cio_get_campaign_metrics",
+  "cio_list_newsletters",
+  "cio_get_newsletter_metrics",
+  "cio_list_activities",
+]);
+
 export class CotributeMCPServer {
   private server: Server;
   private frontappAxios: AxiosInstance | null;
   private pipedriveAxios: AxiosInstance | null;
   private gaDataAxios: AxiosInstance | null;
   private gaAdminAxios: AxiosInstance | null;
+  private customerioAxios: AxiosInstance | null;
   private handlers: Record<string, (args: any) => Promise<any>>;
   private scope: ModuleScope;
 
@@ -90,7 +110,9 @@ export class CotributeMCPServer {
     pipedriveToken?: string,
     pipedriveDomain?: string,
     scope: ModuleScope = "all",
-    gaCredentials?: string
+    gaCredentials?: string,
+    customerioApiKey?: string,
+    customerioRegion?: string
   ) {
     this.scope = scope;
     this.server = new Server(
@@ -103,6 +125,7 @@ export class CotributeMCPServer {
     this.pipedriveAxios = null;
     this.gaDataAxios = null;
     this.gaAdminAxios = null;
+    this.customerioAxios = null;
 
     const includeFrontapp =
       scope === "all" || scope === "frontapp" || scope === "frontapp-lite";
@@ -112,6 +135,8 @@ export class CotributeMCPServer {
       scope === "all" ||
       scope === "google-analytics" ||
       scope === "google-analytics-lite";
+    const includeCustomerio =
+      scope === "all" || scope === "customerio" || scope === "customerio-lite";
 
     // Front.app module
     if (includeFrontapp) {
@@ -183,6 +208,22 @@ export class CotributeMCPServer {
       );
     }
 
+    // Customer.io module
+    if (includeCustomerio && customerioApiKey) {
+      const region = customerioRegion === "eu" ? "api-eu" : "api";
+      this.customerioAxios = axios.create({
+        baseURL: `https://${region}.customer.io/v1`,
+        headers: {
+          Authorization: `Bearer ${customerioApiKey}`,
+          "Content-Type": "application/json",
+        },
+      });
+      Object.assign(
+        this.handlers,
+        createCustomerioHandlers(this.customerioAxios)
+      );
+    }
+
     this.setupHandlers();
     this.setupErrorHandling();
   }
@@ -207,12 +248,15 @@ export class CotributeMCPServer {
           ? PIPEDRIVE_LITE_TOOLS
           : this.scope === "google-analytics-lite"
             ? GA_LITE_TOOLS
-            : null;
+            : this.scope === "customerio-lite"
+              ? CUSTOMERIO_LITE_TOOLS
+              : null;
 
     const allTools = [
       ...(this.frontappAxios ? frontappTools : []),
       ...(this.pipedriveAxios ? pipedriveTools : []),
       ...(this.gaDataAxios ? gaTools : []),
+      ...(this.customerioAxios ? customerioTools : []),
     ];
 
     const exposedTools = liteFilter

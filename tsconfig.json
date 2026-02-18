@@ -18,6 +18,6 @@
     "declarationMap": false,
     "sourceMap": false
   },
-  "include": ["src/index.ts", "src/server.ts", "src/frontapp/**/*.ts", "src/pipedrive/**/*.ts", "src/google-analytics/**/*.ts"],
+  "include": ["src/index.ts", "src/server.ts", "src/frontapp/**/*.ts", "src/pipedrive/**/*.ts", "src/google-analytics/**/*.ts", "src/customerio/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
