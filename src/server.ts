@@ -11,13 +11,18 @@ import { tools as frontappTools } from "./frontapp/tools.js";
 import { createHandlers as createFrontappHandlers } from "./frontapp/handlers.js";
 import { tools as pipedriveTools } from "./pipedrive/tools.js";
 import { createHandlers as createPipedriveHandlers } from "./pipedrive/handlers.js";
+import { tools as gaTools } from "./google-analytics/tools.js";
+import { createHandlers as createGAHandlers } from "./google-analytics/handlers.js";
+import { GoogleAuth } from "google-auth-library";
 
 export type ModuleScope =
   | "all"
   | "frontapp"
   | "pipedrive"
   | "frontapp-lite"
-  | "pipedrive-lite";
+  | "pipedrive-lite"
+  | "google-analytics"
+  | "google-analytics-lite";
 
 // Read-only tool whitelists for lite scopes (saves ~80% of context tokens)
 const FRONTAPP_LITE_TOOLS = new Set([
@@ -65,10 +70,18 @@ const PIPEDRIVE_LITE_TOOLS = new Set([
   "list_organization_fields",
 ]);
 
+const GA_LITE_TOOLS = new Set([
+  "ga_get_account_summaries",
+  "ga_run_report",
+  "ga_get_metadata",
+]);
+
 export class CotributeMCPServer {
   private server: Server;
   private frontappAxios: AxiosInstance | null;
   private pipedriveAxios: AxiosInstance | null;
+  private gaDataAxios: AxiosInstance | null;
+  private gaAdminAxios: AxiosInstance | null;
   private handlers: Record<string, (args: any) => Promise<any>>;
   private scope: ModuleScope;
 
@@ -76,7 +89,8 @@ export class CotributeMCPServer {
     frontappToken: string,
     pipedriveToken?: string,
     pipedriveDomain?: string,
-    scope: ModuleScope = "all"
+    scope: ModuleScope = "all",
+    gaCredentials?: string
   ) {
     this.scope = scope;
     this.server = new Server(
@@ -87,11 +101,17 @@ export class CotributeMCPServer {
     this.handlers = {};
     this.frontappAxios = null;
     this.pipedriveAxios = null;
+    this.gaDataAxios = null;
+    this.gaAdminAxios = null;
 
     const includeFrontapp =
       scope === "all" || scope === "frontapp" || scope === "frontapp-lite";
     const includePipedrive =
       scope === "all" || scope === "pipedrive" || scope === "pipedrive-lite";
+    const includeGA =
+      scope === "all" ||
+      scope === "google-analytics" ||
+      scope === "google-analytics-lite";
 
     // Front.app module
     if (includeFrontapp) {
@@ -120,6 +140,49 @@ export class CotributeMCPServer {
       );
     }
 
+    // Google Analytics module
+    if (includeGA && gaCredentials) {
+      const credentials = JSON.parse(
+        Buffer.from(gaCredentials, "base64").toString("utf-8")
+      );
+      const auth = new GoogleAuth({
+        credentials,
+        scopes: [
+          "https://www.googleapis.com/auth/analytics.readonly",
+          "https://www.googleapis.com/auth/analytics.edit",
+        ],
+      });
+
+      const addAuthInterceptor = (instance: AxiosInstance) => {
+        instance.interceptors.request.use(async (config) => {
+          const client = await auth.getClient();
+          const token = await client.getAccessToken();
+          config.headers.Authorization = `Bearer ${token.token}`;
+          return config;
+        });
+        return instance;
+      };
+
+      this.gaDataAxios = addAuthInterceptor(
+        axios.create({
+          baseURL: "https://analyticsdata.googleapis.com",
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+      this.gaAdminAxios = addAuthInterceptor(
+        axios.create({
+          baseURL: "https://analyticsadmin.googleapis.com",
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+      Object.assign(
+        this.handlers,
+        createGAHandlers(this.gaDataAxios, this.gaAdminAxios)
+      );
+    }
+
     this.setupHandlers();
     this.setupErrorHandling();
   }
@@ -142,11 +205,14 @@ export class CotributeMCPServer {
         ? FRONTAPP_LITE_TOOLS
         : this.scope === "pipedrive-lite"
           ? PIPEDRIVE_LITE_TOOLS
-          : null;
+          : this.scope === "google-analytics-lite"
+            ? GA_LITE_TOOLS
+            : null;
 
     const allTools = [
       ...(this.frontappAxios ? frontappTools : []),
       ...(this.pipedriveAxios ? pipedriveTools : []),
+      ...(this.gaDataAxios ? gaTools : []),
     ];
 
     const exposedTools = liteFilter

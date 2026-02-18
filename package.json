@@ -14,8 +14,8 @@
     "dev": "tsc && node dist/index.js",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "format": "prettier --write \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\"",
-    "format:check": "prettier --check \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\"",
+    "format": "prettier --write \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/google-analytics/**/*.ts\"",
+    "format:check": "prettier --check \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/google-analytics/**/*.ts\"",
     "heroku-postbuild": "npm run build"
   },
   "keywords": [
@@ -31,7 +31,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "axios": "^1.7.9",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "google-auth-library": "^9.14.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

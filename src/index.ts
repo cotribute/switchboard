@@ -17,6 +17,9 @@ if (!frontappToken) {
 const pipedriveToken = process.env.PIPEDRIVE_API_TOKEN;
 const pipedriveDomain = process.env.PIPEDRIVE_DOMAIN;
 
+// Optional Google Analytics env vars
+const gaCredentials = process.env.GOOGLE_ANALYTICS_CREDENTIALS;
+
 if (pipedriveToken && !pipedriveDomain) {
   console.error(
     "Error: PIPEDRIVE_DOMAIN is required when PIPEDRIVE_API_TOKEN is set"
@@ -64,7 +67,8 @@ function createMcpHandler(scope: ModuleScope) {
         frontappToken,
         pipedriveToken,
         pipedriveDomain,
-        scope
+        scope,
+        gaCredentials
       );
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
@@ -100,7 +104,11 @@ function createMcpHandler(scope: ModuleScope) {
 }
 
 // Lite endpoints — read-only tools for context-constrained clients (Cowork)
-app.all("/frontapp-lite/mcp", authMiddleware, createMcpHandler("frontapp-lite"));
+app.all(
+  "/frontapp-lite/mcp",
+  authMiddleware,
+  createMcpHandler("frontapp-lite")
+);
 app.all(
   "/frontapp-lite/mcp/:token",
   authMiddleware,
@@ -116,15 +124,32 @@ app.all(
   authMiddleware,
   createMcpHandler("pipedrive-lite")
 );
+// Google Analytics endpoints
+app.all(
+  "/google-analytics-lite/mcp",
+  authMiddleware,
+  createMcpHandler("google-analytics-lite")
+);
+app.all(
+  "/google-analytics-lite/mcp/:token",
+  authMiddleware,
+  createMcpHandler("google-analytics-lite")
+);
+app.all(
+  "/google-analytics/mcp",
+  authMiddleware,
+  createMcpHandler("google-analytics")
+);
+app.all(
+  "/google-analytics/mcp/:token",
+  authMiddleware,
+  createMcpHandler("google-analytics")
+);
 // Full scoped endpoints
 app.all("/frontapp/mcp", authMiddleware, createMcpHandler("frontapp"));
 app.all("/frontapp/mcp/:token", authMiddleware, createMcpHandler("frontapp"));
 app.all("/pipedrive/mcp", authMiddleware, createMcpHandler("pipedrive"));
-app.all(
-  "/pipedrive/mcp/:token",
-  authMiddleware,
-  createMcpHandler("pipedrive")
-);
+app.all("/pipedrive/mcp/:token", authMiddleware, createMcpHandler("pipedrive"));
 // All tools (backwards compatible)
 app.all("/mcp", authMiddleware, createMcpHandler("all"));
 app.all("/mcp/:token", authMiddleware, createMcpHandler("all"));
@@ -133,6 +158,7 @@ const port = parseInt(process.env.PORT || "3000", 10);
 app.listen(port, () => {
   const services = ["Front.app"];
   if (pipedriveToken) services.push("Pipedrive");
+  if (gaCredentials) services.push("Google Analytics");
   console.log(
     `Switchboard MCP server listening on port ${port} (${services.join(" + ")})`
   );
