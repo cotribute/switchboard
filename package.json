@@ -1,7 +1,7 @@
 {
   "name": "switchboard",
   "version": "2.0.0",
-  "description": "Cotribute MCP server — Front.app + Pipedrive + Dealfront + Customer.io tools for Claude",
+  "description": "Cotribute MCP server — Front.app + Pipedrive + Dealfront + Customer.io + Instantly tools for Claude",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -14,8 +14,8 @@
     "dev": "tsc && node dist/index.js",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "format": "prettier --write \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\" \"src/google-analytics/**/*.ts\" \"src/customerio/**/*.ts\"",
-    "format:check": "prettier --check \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\" \"src/google-analytics/**/*.ts\" \"src/customerio/**/*.ts\"",
+    "format": "prettier --write \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\" \"src/google-analytics/**/*.ts\" \"src/customerio/**/*.ts\" \"src/instantly/**/*.ts\"",
+    "format:check": "prettier --check \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\" \"src/google-analytics/**/*.ts\" \"src/customerio/**/*.ts\" \"src/instantly/**/*.ts\"",
     "heroku-postbuild": "npm run build"
   },
   "keywords": [
@@ -25,6 +25,7 @@
     "dealfront",
     "leadfeeder",
     "customerio",
+    "instantly",
     "model-context-protocol",
     "claude",
     "switchboard"

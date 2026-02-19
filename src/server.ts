@@ -17,6 +17,8 @@ import { tools as gaTools } from "./google-analytics/tools.js";
 import { createHandlers as createGAHandlers } from "./google-analytics/handlers.js";
 import { tools as customerioTools } from "./customerio/tools.js";
 import { createHandlers as createCustomerioHandlers } from "./customerio/handlers.js";
+import { tools as instantlyTools } from "./instantly/tools.js";
+import { createHandlers as createInstantlyHandlers } from "./instantly/handlers.js";
 import { GoogleAuth } from "google-auth-library";
 
 export type ModuleScope =
@@ -30,7 +32,9 @@ export type ModuleScope =
   | "google-analytics"
   | "google-analytics-lite"
   | "customerio"
-  | "customerio-lite";
+  | "customerio-lite"
+  | "instantly"
+  | "instantly-lite";
 
 // Read-only tool whitelists for lite scopes (saves ~80% of context tokens)
 const FRONTAPP_LITE_TOOLS = new Set([
@@ -112,6 +116,27 @@ const CUSTOMERIO_LITE_TOOLS = new Set([
   "cio_list_activities",
 ]);
 
+const INSTANTLY_LITE_TOOLS = new Set([
+  "instantly_list_campaigns",
+  "instantly_get_campaign",
+  "instantly_get_campaign_analytics",
+  "instantly_get_campaign_analytics_overview",
+  "instantly_get_campaign_analytics_daily",
+  "instantly_get_campaign_analytics_steps",
+  "instantly_list_leads",
+  "instantly_get_lead",
+  "instantly_list_lead_lists",
+  "instantly_get_lead_list",
+  "instantly_list_accounts",
+  "instantly_get_account",
+  "instantly_get_account_analytics_daily",
+  "instantly_list_emails",
+  "instantly_get_email",
+  "instantly_get_unread_count",
+  "instantly_list_blocklist_entries",
+  "instantly_list_lead_labels",
+]);
+
 export class CotributeMCPServer {
   private server: Server;
   private frontappAxios: AxiosInstance | null;
@@ -121,6 +146,7 @@ export class CotributeMCPServer {
   private gaDataAxios: AxiosInstance | null;
   private gaAdminAxios: AxiosInstance | null;
   private customerioAxios: AxiosInstance | null;
+  private instantlyAxios: AxiosInstance | null;
   private handlers: Record<string, (args: any) => Promise<any>>;
   private scope: ModuleScope;
 
@@ -133,7 +159,8 @@ export class CotributeMCPServer {
     dealfrontIpEnrichKey?: string,
     gaCredentials?: string,
     customerioApiKey?: string,
-    customerioRegion?: string
+    customerioRegion?: string,
+    instantlyApiKey?: string
   ) {
     this.scope = scope;
     this.server = new Server(
@@ -149,6 +176,7 @@ export class CotributeMCPServer {
     this.gaDataAxios = null;
     this.gaAdminAxios = null;
     this.customerioAxios = null;
+    this.instantlyAxios = null;
 
     const includeFrontapp =
       scope === "all" || scope === "frontapp" || scope === "frontapp-lite";
@@ -162,6 +190,8 @@ export class CotributeMCPServer {
       scope === "google-analytics-lite";
     const includeCustomerio =
       scope === "all" || scope === "customerio" || scope === "customerio-lite";
+    const includeInstantly =
+      scope === "all" || scope === "instantly" || scope === "instantly-lite";
 
     // Front.app module
     if (includeFrontapp) {
@@ -278,6 +308,21 @@ export class CotributeMCPServer {
       );
     }
 
+    // Instantly.ai module
+    if (includeInstantly && instantlyApiKey) {
+      this.instantlyAxios = axios.create({
+        baseURL: "https://api.instantly.ai/api/v2",
+        headers: {
+          Authorization: `Bearer ${instantlyApiKey}`,
+          "Content-Type": "application/json",
+        },
+      });
+      Object.assign(
+        this.handlers,
+        createInstantlyHandlers(this.instantlyAxios)
+      );
+    }
+
     this.setupHandlers();
     this.setupErrorHandling();
   }
@@ -306,7 +351,9 @@ export class CotributeMCPServer {
               ? GA_LITE_TOOLS
               : this.scope === "customerio-lite"
                 ? CUSTOMERIO_LITE_TOOLS
-                : null;
+                : this.scope === "instantly-lite"
+                  ? INSTANTLY_LITE_TOOLS
+                  : null;
 
     const allTools = [
       ...(this.frontappAxios ? frontappTools : []),
@@ -314,6 +361,7 @@ export class CotributeMCPServer {
       ...(this.dealfrontAxios ? dealfrontTools : []),
       ...(this.gaDataAxios ? gaTools : []),
       ...(this.customerioAxios ? customerioTools : []),
+      ...(this.instantlyAxios ? instantlyTools : []),
     ];
 
     const exposedTools = liteFilter

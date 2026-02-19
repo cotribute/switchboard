@@ -35,6 +35,9 @@ if (pipedriveToken && !pipedriveDomain) {
 const dealfrontToken = process.env.DEALFRONT_API_TOKEN;
 const dealfrontIpEnrichKey = process.env.DEALFRONT_IP_ENRICH_API_KEY;
 
+// Optional Instantly.ai env vars
+const instantlyApiKey = process.env.INSTANTLY_API_KEY;
+
 const mcpApiKey = process.env.MCP_API_KEY;
 
 const app = express();
@@ -80,7 +83,8 @@ function createMcpHandler(scope: ModuleScope) {
         dealfrontIpEnrichKey,
         gaCredentials,
         customerioApiKey,
-        customerioRegion
+        customerioRegion,
+        instantlyApiKey
       );
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
@@ -185,6 +189,23 @@ app.all(
   authMiddleware,
   createMcpHandler("customerio")
 );
+// Instantly.ai endpoints
+app.all(
+  "/instantly-lite/mcp",
+  authMiddleware,
+  createMcpHandler("instantly-lite")
+);
+app.all(
+  "/instantly-lite/mcp/:token",
+  authMiddleware,
+  createMcpHandler("instantly-lite")
+);
+app.all("/instantly/mcp", authMiddleware, createMcpHandler("instantly"));
+app.all(
+  "/instantly/mcp/:token",
+  authMiddleware,
+  createMcpHandler("instantly")
+);
 // Full scoped endpoints
 app.all("/frontapp/mcp", authMiddleware, createMcpHandler("frontapp"));
 app.all("/frontapp/mcp/:token", authMiddleware, createMcpHandler("frontapp"));
@@ -203,6 +224,7 @@ app.listen(port, () => {
   if (dealfrontToken) services.push("Dealfront");
   if (gaCredentials) services.push("Google Analytics");
   if (customerioApiKey) services.push("Customer.io");
+  if (instantlyApiKey) services.push("Instantly");
   console.log(
     `Switchboard MCP server listening on port ${port} (${services.join(" + ")})`
   );
