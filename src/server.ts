@@ -13,6 +13,11 @@ import { tools as pipedriveTools } from "./pipedrive/tools.js";
 import { createHandlers as createPipedriveHandlers } from "./pipedrive/handlers.js";
 import { tools as dealfrontTools } from "./dealfront/tools.js";
 import { createHandlers as createDealfrontHandlers } from "./dealfront/handlers.js";
+import { tools as gaTools } from "./google-analytics/tools.js";
+import { createHandlers as createGAHandlers } from "./google-analytics/handlers.js";
+import { tools as customerioTools } from "./customerio/tools.js";
+import { createHandlers as createCustomerioHandlers } from "./customerio/handlers.js";
+import { GoogleAuth } from "google-auth-library";
 
 export type ModuleScope =
   | "all"
@@ -21,7 +26,11 @@ export type ModuleScope =
   | "dealfront"
   | "frontapp-lite"
   | "pipedrive-lite"
-  | "dealfront-lite";
+  | "dealfront-lite"
+  | "google-analytics"
+  | "google-analytics-lite"
+  | "customerio"
+  | "customerio-lite";
 
 // Read-only tool whitelists for lite scopes (saves ~80% of context tokens)
 const FRONTAPP_LITE_TOOLS = new Set([
@@ -82,12 +91,36 @@ const DEALFRONT_LITE_TOOLS = new Set([
   "dealfront_enrich_ip",
 ]);
 
+const GA_LITE_TOOLS = new Set([
+  "ga_get_account_summaries",
+  "ga_run_report",
+  "ga_get_metadata",
+]);
+
+const CUSTOMERIO_LITE_TOOLS = new Set([
+  "cio_search_customers",
+  "cio_get_customer_attributes",
+  "cio_get_customer_segments",
+  "cio_list_segments",
+  "cio_get_segment",
+  "cio_get_segment_membership",
+  "cio_list_campaigns",
+  "cio_get_campaign",
+  "cio_get_campaign_metrics",
+  "cio_list_newsletters",
+  "cio_get_newsletter_metrics",
+  "cio_list_activities",
+]);
+
 export class CotributeMCPServer {
   private server: Server;
   private frontappAxios: AxiosInstance | null;
   private pipedriveAxios: AxiosInstance | null;
   private dealfrontAxios: AxiosInstance | null;
   private dealfrontIpEnrichAxios: AxiosInstance | null;
+  private gaDataAxios: AxiosInstance | null;
+  private gaAdminAxios: AxiosInstance | null;
+  private customerioAxios: AxiosInstance | null;
   private handlers: Record<string, (args: any) => Promise<any>>;
   private scope: ModuleScope;
 
@@ -97,7 +130,10 @@ export class CotributeMCPServer {
     pipedriveDomain?: string,
     scope: ModuleScope = "all",
     dealfrontToken?: string,
-    dealfrontIpEnrichKey?: string
+    dealfrontIpEnrichKey?: string,
+    gaCredentials?: string,
+    customerioApiKey?: string,
+    customerioRegion?: string
   ) {
     this.scope = scope;
     this.server = new Server(
@@ -110,6 +146,9 @@ export class CotributeMCPServer {
     this.pipedriveAxios = null;
     this.dealfrontAxios = null;
     this.dealfrontIpEnrichAxios = null;
+    this.gaDataAxios = null;
+    this.gaAdminAxios = null;
+    this.customerioAxios = null;
 
     const includeFrontapp =
       scope === "all" || scope === "frontapp" || scope === "frontapp-lite";
@@ -117,6 +156,12 @@ export class CotributeMCPServer {
       scope === "all" || scope === "pipedrive" || scope === "pipedrive-lite";
     const includeDealfront =
       scope === "all" || scope === "dealfront" || scope === "dealfront-lite";
+    const includeGA =
+      scope === "all" ||
+      scope === "google-analytics" ||
+      scope === "google-analytics-lite";
+    const includeCustomerio =
+      scope === "all" || scope === "customerio" || scope === "customerio-lite";
 
     // Front.app module
     if (includeFrontapp) {
@@ -174,6 +219,65 @@ export class CotributeMCPServer {
       );
     }
 
+    // Google Analytics module
+    if (includeGA && gaCredentials) {
+      const credentials = JSON.parse(
+        Buffer.from(gaCredentials, "base64").toString("utf-8")
+      );
+      const auth = new GoogleAuth({
+        credentials,
+        scopes: [
+          "https://www.googleapis.com/auth/analytics.readonly",
+          "https://www.googleapis.com/auth/analytics.edit",
+        ],
+      });
+
+      const addAuthInterceptor = (instance: AxiosInstance) => {
+        instance.interceptors.request.use(async (config) => {
+          const client = await auth.getClient();
+          const token = await client.getAccessToken();
+          config.headers.Authorization = `Bearer ${token.token}`;
+          return config;
+        });
+        return instance;
+      };
+
+      this.gaDataAxios = addAuthInterceptor(
+        axios.create({
+          baseURL: "https://analyticsdata.googleapis.com",
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+      this.gaAdminAxios = addAuthInterceptor(
+        axios.create({
+          baseURL: "https://analyticsadmin.googleapis.com",
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+      Object.assign(
+        this.handlers,
+        createGAHandlers(this.gaDataAxios, this.gaAdminAxios)
+      );
+    }
+
+    // Customer.io module
+    if (includeCustomerio && customerioApiKey) {
+      const region = customerioRegion === "eu" ? "api-eu" : "api";
+      this.customerioAxios = axios.create({
+        baseURL: `https://${region}.customer.io/v1`,
+        headers: {
+          Authorization: `Bearer ${customerioApiKey}`,
+          "Content-Type": "application/json",
+        },
+      });
+      Object.assign(
+        this.handlers,
+        createCustomerioHandlers(this.customerioAxios)
+      );
+    }
+
     this.setupHandlers();
     this.setupErrorHandling();
   }
@@ -198,12 +302,18 @@ export class CotributeMCPServer {
           ? PIPEDRIVE_LITE_TOOLS
           : this.scope === "dealfront-lite"
             ? DEALFRONT_LITE_TOOLS
-            : null;
+            : this.scope === "google-analytics-lite"
+              ? GA_LITE_TOOLS
+              : this.scope === "customerio-lite"
+                ? CUSTOMERIO_LITE_TOOLS
+                : null;
 
     const allTools = [
       ...(this.frontappAxios ? frontappTools : []),
       ...(this.pipedriveAxios ? pipedriveTools : []),
       ...(this.dealfrontAxios ? dealfrontTools : []),
+      ...(this.gaDataAxios ? gaTools : []),
+      ...(this.customerioAxios ? customerioTools : []),
     ];
 
     const exposedTools = liteFilter

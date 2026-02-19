@@ -1,7 +1,7 @@
 {
   "name": "switchboard",
   "version": "2.0.0",
-  "description": "Cotribute MCP server — Front.app + Pipedrive + Dealfront tools for Claude",
+  "description": "Cotribute MCP server — Front.app + Pipedrive + Dealfront + Customer.io tools for Claude",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -14,8 +14,8 @@
     "dev": "tsc && node dist/index.js",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "format": "prettier --write \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\"",
-    "format:check": "prettier --check \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\"",
+    "format": "prettier --write \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\" \"src/google-analytics/**/*.ts\" \"src/customerio/**/*.ts\"",
+    "format:check": "prettier --check \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\" \"src/google-analytics/**/*.ts\" \"src/customerio/**/*.ts\"",
     "heroku-postbuild": "npm run build"
   },
   "keywords": [
@@ -24,6 +24,7 @@
     "pipedrive",
     "dealfront",
     "leadfeeder",
+    "customerio",
     "model-context-protocol",
     "claude",
     "switchboard"
@@ -33,7 +34,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "axios": "^1.7.9",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "google-auth-library": "^9.14.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
