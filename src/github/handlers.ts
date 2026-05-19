@@ -46,7 +46,9 @@ export function createHandlers(
       const params: Record<string, any> = { per_page: limit };
       if (args.branch) params.sha = args.branch;
 
-      const response = await axiosInstance.get(`/repos/${args.repo}/commits`, { params });
+      const response = await axiosInstance.get(`/repos/${args.repo}/commits`, {
+        params,
+      });
       return (response.data ?? []).map((c: any) => ({
         sha: c.sha.slice(0, 7),
         message: c.commit.message.split("\n")[0],

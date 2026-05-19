@@ -31,124 +31,16 @@ import { createHandlers as createGithubHandlers } from "./github/handlers.js";
 import { GoogleAuth } from "google-auth-library";
 
 export type ModuleScope =
-  | "all"
   | "frontapp"
   | "pipedrive"
   | "dealfront"
-  | "frontapp-lite"
-  | "pipedrive-lite"
-  | "dealfront-lite"
   | "google-analytics"
-  | "google-analytics-lite"
   | "customerio"
-  | "customerio-lite"
   | "instantly"
-  | "instantly-lite"
   | "heroku-postgres"
   | "coadmin-api"
   | "papertrail"
   | "github";
-
-// Read-only tool whitelists for lite scopes (saves ~80% of context tokens)
-const FRONTAPP_LITE_TOOLS = new Set([
-  "search_conversations",
-  "list_conversations",
-  "get_conversation",
-  "list_conversation_messages",
-  "get_message",
-  "list_contacts",
-  "get_contact",
-  "list_contact_conversations",
-  "list_teammates",
-  "list_tags",
-  "list_inboxes",
-  "list_conversation_comments",
-  "get_analytics",
-  "list_accounts",
-  "get_account",
-]);
-
-const PIPEDRIVE_LITE_TOOLS = new Set([
-  "list_deals",
-  "get_deal",
-  "search_deals",
-  "get_deal_activities",
-  "get_deal_products",
-  "list_persons",
-  "get_person",
-  "search_persons",
-  "get_person_deals",
-  "list_organizations",
-  "get_organization",
-  "search_organizations",
-  "get_organization_deals",
-  "get_organization_persons",
-  "list_activities",
-  "list_notes",
-  "get_note",
-  "list_pipelines",
-  "list_stages",
-  "search_leads",
-  "get_lead",
-  "list_deal_fields",
-  "list_person_fields",
-  "list_organization_fields",
-]);
-
-const DEALFRONT_LITE_TOOLS = new Set([
-  "dealfront_list_accounts",
-  "dealfront_get_account",
-  "dealfront_list_leads",
-  "dealfront_get_lead",
-  "dealfront_list_lead_visits",
-  "dealfront_list_visits",
-  "dealfront_list_custom_feeds",
-  "dealfront_list_custom_feed_leads",
-  "dealfront_get_export_status",
-  "dealfront_enrich_ip",
-]);
-
-const GA_LITE_TOOLS = new Set([
-  "ga_get_account_summaries",
-  "ga_run_report",
-  "ga_get_metadata",
-]);
-
-const CUSTOMERIO_LITE_TOOLS = new Set([
-  "cio_search_customers",
-  "cio_get_customer_attributes",
-  "cio_get_customer_segments",
-  "cio_list_segments",
-  "cio_get_segment",
-  "cio_get_segment_membership",
-  "cio_list_campaigns",
-  "cio_get_campaign",
-  "cio_get_campaign_metrics",
-  "cio_list_newsletters",
-  "cio_get_newsletter_metrics",
-  "cio_list_activities",
-]);
-
-const INSTANTLY_LITE_TOOLS = new Set([
-  "instantly_list_campaigns",
-  "instantly_get_campaign",
-  "instantly_get_campaign_analytics",
-  "instantly_get_campaign_analytics_overview",
-  "instantly_get_campaign_analytics_daily",
-  "instantly_get_campaign_analytics_steps",
-  "instantly_list_leads",
-  "instantly_get_lead",
-  "instantly_list_lead_lists",
-  "instantly_get_lead_list",
-  "instantly_list_accounts",
-  "instantly_get_account",
-  "instantly_get_account_analytics_daily",
-  "instantly_list_emails",
-  "instantly_get_email",
-  "instantly_get_unread_count",
-  "instantly_list_blocklist_entries",
-  "instantly_list_lead_labels",
-]);
 
 export class CotributeMCPServer {
   private server: Server;
@@ -166,13 +58,12 @@ export class CotributeMCPServer {
   private papertrailAxios: AxiosInstance | null;
   private githubAxios: AxiosInstance | null;
   private handlers: Record<string, (args: any) => Promise<any>>;
-  private scope: ModuleScope;
 
   constructor(
     frontappToken: string,
     pipedriveToken?: string,
     pipedriveDomain?: string,
-    scope: ModuleScope = "all",
+    scope: ModuleScope = "frontapp",
     dealfrontToken?: string,
     dealfrontIpEnrichKey?: string,
     gaCredentials?: string,
@@ -186,7 +77,6 @@ export class CotributeMCPServer {
     papertrailToken?: string,
     githubToken?: string
   ) {
-    this.scope = scope;
     this.server = new Server(
       { name: "switchboard", version: "2.0.0" },
       { capabilities: { tools: {}, resources: {} } }
@@ -207,23 +97,8 @@ export class CotributeMCPServer {
     this.papertrailAxios = null;
     this.githubAxios = null;
 
-    const includeFrontapp =
-      scope === "all" || scope === "frontapp" || scope === "frontapp-lite";
-    const includePipedrive =
-      scope === "all" || scope === "pipedrive" || scope === "pipedrive-lite";
-    const includeDealfront =
-      scope === "all" || scope === "dealfront" || scope === "dealfront-lite";
-    const includeGA =
-      scope === "all" ||
-      scope === "google-analytics" ||
-      scope === "google-analytics-lite";
-    const includeCustomerio =
-      scope === "all" || scope === "customerio" || scope === "customerio-lite";
-    const includeInstantly =
-      scope === "all" || scope === "instantly" || scope === "instantly-lite";
-
     // Front.app module
-    if (includeFrontapp) {
+    if (scope === "frontapp") {
       this.frontappAxios = axios.create({
         baseURL: "https://api2.frontapp.com",
         headers: {
@@ -235,7 +110,7 @@ export class CotributeMCPServer {
     }
 
     // Pipedrive module
-    if (includePipedrive && pipedriveToken && pipedriveDomain) {
+    if (scope === "pipedrive" && pipedriveToken && pipedriveDomain) {
       this.pipedriveAxios = axios.create({
         baseURL: `https://${pipedriveDomain}.pipedrive.com/api/v1`,
         headers: {
@@ -250,7 +125,7 @@ export class CotributeMCPServer {
     }
 
     // Dealfront module
-    if (includeDealfront && dealfrontToken) {
+    if (scope === "dealfront" && dealfrontToken) {
       this.dealfrontAxios = axios.create({
         baseURL: "https://api.leadfeeder.com",
         headers: {
@@ -279,7 +154,7 @@ export class CotributeMCPServer {
     }
 
     // Google Analytics module
-    if (includeGA && gaCredentials) {
+    if (scope === "google-analytics" && gaCredentials) {
       const credentials = JSON.parse(
         Buffer.from(gaCredentials, "base64").toString("utf-8")
       );
@@ -322,7 +197,7 @@ export class CotributeMCPServer {
     }
 
     // Customer.io module
-    if (includeCustomerio && customerioApiKey) {
+    if (scope === "customerio" && customerioApiKey) {
       const region = customerioRegion === "eu" ? "api-eu" : "api";
       this.customerioAxios = axios.create({
         baseURL: `https://${region}.customer.io/v1`,
@@ -338,7 +213,7 @@ export class CotributeMCPServer {
     }
 
     // Instantly.ai module
-    if (includeInstantly && instantlyApiKey) {
+    if (scope === "instantly" && instantlyApiKey) {
       this.instantlyAxios = axios.create({
         baseURL: "https://api.instantly.ai/api/v2",
         headers: {
@@ -352,7 +227,7 @@ export class CotributeMCPServer {
       );
     }
 
-    // Heroku Postgres module (role-level — explicitly NOT included in scope === "all")
+    // Heroku Postgres module (CX support, per-individual)
     if (scope === "heroku-postgres") {
       if (prodDbPool) this.prodDbPool = prodDbPool;
       if (uatDbPool) this.uatDbPool = uatDbPool;
@@ -364,7 +239,7 @@ export class CotributeMCPServer {
       }
     }
 
-    // coadmin-api module (role-level — explicitly NOT included in scope === "all")
+    // coadmin-api module (CX support, per-individual)
     if (scope === "coadmin-api" && coadminApiBaseUrl && coadminApiCreds) {
       this.coadminAxios = axios.create({
         baseURL: coadminApiBaseUrl,
@@ -378,16 +253,19 @@ export class CotributeMCPServer {
       Object.assign(this.handlers, createCoadminApiHandlers(this.coadminAxios));
     }
 
-    // Papertrail module (role-level — explicitly NOT included in scope === "all")
+    // Papertrail module (CX support, per-individual)
     if (scope === "papertrail" && papertrailToken) {
       this.papertrailAxios = axios.create({
         baseURL: "https://papertrailapp.com",
         headers: { "X-Papertrail-Token": papertrailToken },
       });
-      Object.assign(this.handlers, createPapertrailHandlers(this.papertrailAxios));
+      Object.assign(
+        this.handlers,
+        createPapertrailHandlers(this.papertrailAxios)
+      );
     }
 
-    // GitHub module (role-level — explicitly NOT included in scope === "all")
+    // GitHub module (CX support, per-individual)
     if (scope === "github" && githubToken) {
       this.githubAxios = axios.create({
         baseURL: "https://api.github.com",
@@ -416,23 +294,7 @@ export class CotributeMCPServer {
   }
 
   private setupHandlers(): void {
-    // Include tool definitions based on scope, with lite filtering
-    const liteFilter =
-      this.scope === "frontapp-lite"
-        ? FRONTAPP_LITE_TOOLS
-        : this.scope === "pipedrive-lite"
-          ? PIPEDRIVE_LITE_TOOLS
-          : this.scope === "dealfront-lite"
-            ? DEALFRONT_LITE_TOOLS
-            : this.scope === "google-analytics-lite"
-              ? GA_LITE_TOOLS
-              : this.scope === "customerio-lite"
-                ? CUSTOMERIO_LITE_TOOLS
-                : this.scope === "instantly-lite"
-                  ? INSTANTLY_LITE_TOOLS
-                  : null;
-
-    const allTools = [
+    const exposedTools = [
       ...(this.frontappAxios ? frontappTools : []),
       ...(this.pipedriveAxios ? pipedriveTools : []),
       ...(this.dealfrontAxios ? dealfrontTools : []),
@@ -444,10 +306,6 @@ export class CotributeMCPServer {
       ...(this.papertrailAxios ? papertrailTools : []),
       ...(this.githubAxios ? githubTools : []),
     ];
-
-    const exposedTools = liteFilter
-      ? allTools.filter((t) => liteFilter.has(t.name))
-      : allTools;
 
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: exposedTools,
@@ -496,6 +354,12 @@ export class CotributeMCPServer {
 
         const endpoint = resourceMap[uri];
         if (!endpoint) throw new Error(`Unknown resource: ${uri}`);
+
+        if (!this.frontappAxios) {
+          throw new Error(
+            "Frontapp resources are only available on the frontapp scope"
+          );
+        }
 
         const response = await this.frontappAxios.get(endpoint.split("?")[0], {
           params: endpoint.includes("?") ? { limit: 20 } : undefined,

@@ -8,7 +8,8 @@ export const tools = [
       properties: {
         query: {
           type: "string",
-          description: "Search term: error message, function name, slug, field name, etc.",
+          description:
+            "Search term: error message, function name, slug, field name, etc.",
         },
         repo: {
           type: "string",
@@ -22,7 +23,8 @@ export const tools = [
         },
         language: {
           type: "string",
-          description: "Filter by language (e.g. 'typescript', 'ruby'). Optional.",
+          description:
+            "Filter by language (e.g. 'typescript', 'ruby'). Optional.",
         },
       },
       required: ["query"],
@@ -37,15 +39,18 @@ export const tools = [
       properties: {
         repo: {
           type: "string",
-          description: "Repository in 'org/repo' format (e.g. 'cotribute/dreambigger')",
+          description:
+            "Repository in 'org/repo' format (e.g. 'cotribute/dreambigger')",
         },
         path: {
           type: "string",
-          description: "File path within the repo (e.g. 'src/handlers/loanDecision.ts')",
+          description:
+            "File path within the repo (e.g. 'src/handlers/loanDecision.ts')",
         },
         ref: {
           type: "string",
-          description: "Branch, tag, or commit SHA. Defaults to the repo's default branch.",
+          description:
+            "Branch, tag, or commit SHA. Defaults to the repo's default branch.",
         },
       },
       required: ["repo", "path"],

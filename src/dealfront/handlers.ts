@@ -110,23 +110,6 @@ export function createHandlers(
     },
 
     // ==================== Exports ====================
-    dealfront_create_export: async (args: {
-      account_id: string;
-      start_date: string;
-      end_date: string;
-    }) => {
-      const response = await leadfeederAxios.post("/export-requests", {
-        data: {
-          type: "export-requests",
-          attributes: {
-            account_id: args.account_id,
-            start_date: args.start_date,
-            end_date: args.end_date,
-          },
-        },
-      });
-      return response.data;
-    },
     dealfront_get_export_status: async (args: { export_id: string }) => {
       const response = await leadfeederAxios.get(
         `/export-requests/${args.export_id}`

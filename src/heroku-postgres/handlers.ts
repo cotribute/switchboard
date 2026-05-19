@@ -4,10 +4,14 @@ export function createHandlers(
   prodPool: Pool | null,
   uatPool: Pool | null
 ): Record<string, (args: any) => Promise<any>> {
-  function pool(env: string | undefined, configDefault: "prod" | "sandbox" = "prod"): Pool {
+  function pool(
+    env: string | undefined,
+    configDefault: "prod" | "sandbox" = "prod"
+  ): Pool {
     const effective = env ?? configDefault;
     const p = effective === "sandbox" ? uatPool : prodPool;
-    if (!p) throw new Error(`No database pool configured for env: ${effective}`);
+    if (!p)
+      throw new Error(`No database pool configured for env: ${effective}`);
     return p;
   }
 

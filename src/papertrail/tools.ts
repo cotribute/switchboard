@@ -17,7 +17,8 @@ export const tools = [
       properties: {
         query: {
           type: "string",
-          description: "Search term: application UUID, user UUID, email, error string, etc.",
+          description:
+            "Search term: application UUID, user UUID, email, error string, etc.",
         },
         hours: {
           type: "number",

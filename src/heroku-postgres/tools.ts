@@ -26,8 +26,15 @@ export const tools = [
       type: "object",
       properties: {
         user_id: { type: "string", description: "financial_users.id (UUID)" },
-        limit: { type: "number", description: "Number of results (default 5, max 20)" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: prod)" },
+        limit: {
+          type: "number",
+          description: "Number of results (default 5, max 20)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
       },
       required: ["user_id"],
     },
@@ -39,8 +46,15 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: prod)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
       },
       required: ["application_id"],
     },
@@ -52,8 +66,15 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: prod)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
       },
       required: ["application_id"],
     },
@@ -65,8 +86,15 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: prod)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
       },
       required: ["application_id"],
     },
@@ -78,8 +106,15 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: prod)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
       },
       required: ["application_id"],
     },
@@ -92,7 +127,11 @@ export const tools = [
       type: "object",
       properties: {
         user_id: { type: "string", description: "financial_users.id (UUID)" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: prod)" },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
       },
       required: ["user_id"],
     },
@@ -108,7 +147,11 @@ export const tools = [
       type: "object",
       properties: {
         flow_id: { type: "string", description: "flows.id (UUID)" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: sandbox)" },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
       },
       required: ["flow_id"],
     },
@@ -120,8 +163,15 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        fi_id: { type: "string", description: "financial_institutions.id (UUID)" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: sandbox)" },
+        fi_id: {
+          type: "string",
+          description: "financial_institutions.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
       },
       required: ["fi_id"],
     },
@@ -133,8 +183,15 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        fi_product_id: { type: "string", description: "financial_institution_products.id (UUID)" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: sandbox)" },
+        fi_product_id: {
+          type: "string",
+          description: "financial_institution_products.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
       },
       required: ["fi_product_id"],
     },
@@ -146,8 +203,15 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        fi_id: { type: "string", description: "financial_institutions.id (UUID)" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: sandbox)" },
+        fi_id: {
+          type: "string",
+          description: "financial_institutions.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
       },
       required: ["fi_id"],
     },
@@ -159,8 +223,15 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Financial institution name or partial name" },
-        env: { type: "string", enum: ["prod", "sandbox"], description: "Database environment (default: sandbox)" },
+        name: {
+          type: "string",
+          description: "Financial institution name or partial name",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
       },
       required: ["name"],
     },

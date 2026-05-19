@@ -18,22 +18,6 @@ export const tools = [
       },
     },
   },
-  {
-    name: "ga_get_property_details",
-    description:
-      "Get detailed information about a specific GA4 property, including display name, time zone, currency, industry category, and creation time.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        propertyId: {
-          type: "string",
-          description:
-            "The GA4 property ID (numeric string, e.g. '123456789').",
-        },
-      },
-      required: ["propertyId"],
-    },
-  },
 
   // ==================== Reports ====================
   {
@@ -125,61 +109,6 @@ export const tools = [
       required: ["propertyId", "metrics", "dateRanges"],
     },
   },
-  {
-    name: "ga_run_realtime_report",
-    description:
-      "Run a realtime report on a GA4 property. Shows data from the last 30 minutes. Common realtime metrics: activeUsers, screenPageViews, eventCount, conversions. Common realtime dimensions: unifiedScreenName, country, city, deviceCategory.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        propertyId: {
-          type: "string",
-          description:
-            "The GA4 property ID (numeric string, e.g. '123456789').",
-        },
-        metrics: {
-          type: "array",
-          description: "Metrics to retrieve (e.g. [{name: 'activeUsers'}]).",
-          items: {
-            type: "object",
-            properties: {
-              name: {
-                type: "string",
-                description: "The metric name (e.g. 'activeUsers').",
-              },
-            },
-          },
-        },
-        dimensions: {
-          type: "array",
-          description:
-            "Optional dimensions to group by (e.g. [{name: 'country'}]).",
-          items: {
-            type: "object",
-            properties: {
-              name: {
-                type: "string",
-                description: "The dimension name.",
-              },
-            },
-          },
-        },
-        dimensionFilter: {
-          type: "object",
-          description: "Optional filter on dimensions.",
-        },
-        metricFilter: {
-          type: "object",
-          description: "Optional filter on metrics.",
-        },
-        limit: {
-          type: "number",
-          description: "Maximum number of rows to return.",
-        },
-      },
-      required: ["propertyId", "metrics"],
-    },
-  },
 
   // ==================== Metadata ====================
   {
@@ -193,32 +122,6 @@ export const tools = [
           type: "string",
           description:
             "The GA4 property ID (numeric string, e.g. '123456789').",
-        },
-      },
-      required: ["propertyId"],
-    },
-  },
-
-  // ==================== Google Ads Links ====================
-  {
-    name: "ga_list_google_ads_links",
-    description:
-      "List Google Ads links for a GA4 property. Shows which Google Ads accounts are linked.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        propertyId: {
-          type: "string",
-          description:
-            "The GA4 property ID (numeric string, e.g. '123456789').",
-        },
-        pageSize: {
-          type: "number",
-          description: "Maximum number of results to return.",
-        },
-        pageToken: {
-          type: "string",
-          description: "Page token from a previous response for pagination.",
         },
       },
       required: ["propertyId"],

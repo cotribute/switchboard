@@ -161,124 +161,25 @@ function createMcpHandler(scope: ModuleScope) {
   };
 }
 
-// Lite endpoints — read-only tools for context-constrained clients (Cowork)
-app.all(
-  "/frontapp-lite/mcp",
-  authMiddleware,
-  createMcpHandler("frontapp-lite")
-);
-app.all(
-  "/frontapp-lite/mcp/:token",
-  authMiddleware,
-  createMcpHandler("frontapp-lite")
-);
-app.all(
-  "/pipedrive-lite/mcp",
-  authMiddleware,
-  createMcpHandler("pipedrive-lite")
-);
-app.all(
-  "/pipedrive-lite/mcp/:token",
-  authMiddleware,
-  createMcpHandler("pipedrive-lite")
-);
-// Dealfront lite endpoint
-app.all(
-  "/dealfront-lite/mcp",
-  authMiddleware,
-  createMcpHandler("dealfront-lite")
-);
-app.all(
-  "/dealfront-lite/mcp/:token",
-  authMiddleware,
-  createMcpHandler("dealfront-lite")
-);
-// Google Analytics endpoints
-app.all(
-  "/google-analytics-lite/mcp",
-  authMiddleware,
-  createMcpHandler("google-analytics-lite")
-);
-app.all(
-  "/google-analytics-lite/mcp/:token",
-  authMiddleware,
-  createMcpHandler("google-analytics-lite")
-);
-app.all(
-  "/google-analytics/mcp",
-  authMiddleware,
-  createMcpHandler("google-analytics")
-);
-app.all(
-  "/google-analytics/mcp/:token",
-  authMiddleware,
-  createMcpHandler("google-analytics")
-);
-// Customer.io endpoints
-app.all(
-  "/customerio-lite/mcp",
-  authMiddleware,
-  createMcpHandler("customerio-lite")
-);
-app.all(
-  "/customerio-lite/mcp/:token",
-  authMiddleware,
-  createMcpHandler("customerio-lite")
-);
-app.all("/customerio/mcp", authMiddleware, createMcpHandler("customerio"));
-app.all(
-  "/customerio/mcp/:token",
-  authMiddleware,
-  createMcpHandler("customerio")
-);
-// Instantly.ai endpoints
-app.all(
-  "/instantly-lite/mcp",
-  authMiddleware,
-  createMcpHandler("instantly-lite")
-);
-app.all(
-  "/instantly-lite/mcp/:token",
-  authMiddleware,
-  createMcpHandler("instantly-lite")
-);
-app.all("/instantly/mcp", authMiddleware, createMcpHandler("instantly"));
-app.all("/instantly/mcp/:token", authMiddleware, createMcpHandler("instantly"));
-// Support-research endpoints (role-level — not included in /mcp scope="all")
-app.all(
-  "/heroku-postgres/mcp",
-  authMiddleware,
-  createMcpHandler("heroku-postgres")
-);
-app.all(
-  "/heroku-postgres/mcp/:token",
-  authMiddleware,
-  createMcpHandler("heroku-postgres")
-);
-app.all("/coadmin-api/mcp", authMiddleware, createMcpHandler("coadmin-api"));
-app.all(
-  "/coadmin-api/mcp/:token",
-  authMiddleware,
-  createMcpHandler("coadmin-api")
-);
-app.all("/papertrail/mcp", authMiddleware, createMcpHandler("papertrail"));
-app.all(
-  "/papertrail/mcp/:token",
-  authMiddleware,
-  createMcpHandler("papertrail")
-);
-app.all("/github/mcp", authMiddleware, createMcpHandler("github"));
-app.all("/github/mcp/:token", authMiddleware, createMcpHandler("github"));
-// Full scoped endpoints
-app.all("/frontapp/mcp", authMiddleware, createMcpHandler("frontapp"));
-app.all("/frontapp/mcp/:token", authMiddleware, createMcpHandler("frontapp"));
-app.all("/pipedrive/mcp", authMiddleware, createMcpHandler("pipedrive"));
-app.all("/pipedrive/mcp/:token", authMiddleware, createMcpHandler("pipedrive"));
-app.all("/dealfront/mcp", authMiddleware, createMcpHandler("dealfront"));
-app.all("/dealfront/mcp/:token", authMiddleware, createMcpHandler("dealfront"));
-// All tools (backwards compatible)
-app.all("/mcp", authMiddleware, createMcpHandler("all"));
-app.all("/mcp/:token", authMiddleware, createMcpHandler("all"));
+// Module endpoints — each exposes one team-relevant integration
+const moduleEndpoints: ModuleScope[] = [
+  "frontapp",
+  "pipedrive",
+  "dealfront",
+  "google-analytics",
+  "customerio",
+  "instantly",
+  // CX support (per-individual)
+  "heroku-postgres",
+  "coadmin-api",
+  "papertrail",
+  "github",
+];
+
+for (const scope of moduleEndpoints) {
+  app.all(`/${scope}/mcp`, authMiddleware, createMcpHandler(scope));
+  app.all(`/${scope}/mcp/:token`, authMiddleware, createMcpHandler(scope));
+}
 
 const port = parseInt(process.env.PORT || "3000", 10);
 app.listen(port, () => {

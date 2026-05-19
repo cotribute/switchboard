@@ -6,7 +6,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -18,7 +21,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -30,7 +36,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -42,7 +51,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -54,7 +66,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -66,7 +81,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -78,7 +96,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -90,7 +111,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -102,7 +126,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -114,7 +141,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -126,7 +156,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -138,7 +171,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -150,7 +186,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -162,7 +201,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
@@ -174,7 +216,10 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        application_id: { type: "string", description: "onboarding_applications.id (UUID)" },
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
       },
       required: ["application_id"],
     },
