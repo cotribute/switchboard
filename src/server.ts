@@ -6,6 +6,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import axios, { AxiosInstance } from "axios";
+import { Pool } from "pg";
 
 import { tools as frontappTools } from "./frontapp/tools.js";
 import { createHandlers as createFrontappHandlers } from "./frontapp/handlers.js";
@@ -19,6 +20,14 @@ import { tools as customerioTools } from "./customerio/tools.js";
 import { createHandlers as createCustomerioHandlers } from "./customerio/handlers.js";
 import { tools as instantlyTools } from "./instantly/tools.js";
 import { createHandlers as createInstantlyHandlers } from "./instantly/handlers.js";
+import { tools as herokuPostgresTools } from "./heroku-postgres/tools.js";
+import { createHandlers as createHerokuPostgresHandlers } from "./heroku-postgres/handlers.js";
+import { tools as coadminApiTools } from "./coadmin-api/tools.js";
+import { createHandlers as createCoadminApiHandlers } from "./coadmin-api/handlers.js";
+import { tools as papertrailTools } from "./papertrail/tools.js";
+import { createHandlers as createPapertrailHandlers } from "./papertrail/handlers.js";
+import { tools as githubTools } from "./github/tools.js";
+import { createHandlers as createGithubHandlers } from "./github/handlers.js";
 import { GoogleAuth } from "google-auth-library";
 
 export type ModuleScope =
@@ -34,7 +43,11 @@ export type ModuleScope =
   | "customerio"
   | "customerio-lite"
   | "instantly"
-  | "instantly-lite";
+  | "instantly-lite"
+  | "heroku-postgres"
+  | "coadmin-api"
+  | "papertrail"
+  | "github";
 
 // Read-only tool whitelists for lite scopes (saves ~80% of context tokens)
 const FRONTAPP_LITE_TOOLS = new Set([
@@ -147,6 +160,11 @@ export class CotributeMCPServer {
   private gaAdminAxios: AxiosInstance | null;
   private customerioAxios: AxiosInstance | null;
   private instantlyAxios: AxiosInstance | null;
+  private prodDbPool: Pool | null;
+  private uatDbPool: Pool | null;
+  private coadminAxios: AxiosInstance | null;
+  private papertrailAxios: AxiosInstance | null;
+  private githubAxios: AxiosInstance | null;
   private handlers: Record<string, (args: any) => Promise<any>>;
   private scope: ModuleScope;
 
@@ -160,7 +178,13 @@ export class CotributeMCPServer {
     gaCredentials?: string,
     customerioApiKey?: string,
     customerioRegion?: string,
-    instantlyApiKey?: string
+    instantlyApiKey?: string,
+    prodDbPool?: Pool | null,
+    uatDbPool?: Pool | null,
+    coadminApiBaseUrl?: string,
+    coadminApiCreds?: { apiKey: string; apiSecret: string; clientId: string },
+    papertrailToken?: string,
+    githubToken?: string
   ) {
     this.scope = scope;
     this.server = new Server(
@@ -177,6 +201,11 @@ export class CotributeMCPServer {
     this.gaAdminAxios = null;
     this.customerioAxios = null;
     this.instantlyAxios = null;
+    this.prodDbPool = null;
+    this.uatDbPool = null;
+    this.coadminAxios = null;
+    this.papertrailAxios = null;
+    this.githubAxios = null;
 
     const includeFrontapp =
       scope === "all" || scope === "frontapp" || scope === "frontapp-lite";
@@ -323,6 +352,54 @@ export class CotributeMCPServer {
       );
     }
 
+    // Heroku Postgres module (role-level — explicitly NOT included in scope === "all")
+    if (scope === "heroku-postgres") {
+      if (prodDbPool) this.prodDbPool = prodDbPool;
+      if (uatDbPool) this.uatDbPool = uatDbPool;
+      if (this.prodDbPool || this.uatDbPool) {
+        Object.assign(
+          this.handlers,
+          createHerokuPostgresHandlers(this.prodDbPool, this.uatDbPool)
+        );
+      }
+    }
+
+    // coadmin-api module (role-level — explicitly NOT included in scope === "all")
+    if (scope === "coadmin-api" && coadminApiBaseUrl && coadminApiCreds) {
+      this.coadminAxios = axios.create({
+        baseURL: coadminApiBaseUrl,
+        headers: {
+          Accept: "application/json",
+          "X-Cotribute-Api-Key": coadminApiCreds.apiKey,
+          "X-Cotribute-Api-Secret": coadminApiCreds.apiSecret,
+          "X-Cotribute-Client-Id": coadminApiCreds.clientId,
+        },
+      });
+      Object.assign(this.handlers, createCoadminApiHandlers(this.coadminAxios));
+    }
+
+    // Papertrail module (role-level — explicitly NOT included in scope === "all")
+    if (scope === "papertrail" && papertrailToken) {
+      this.papertrailAxios = axios.create({
+        baseURL: "https://papertrailapp.com",
+        headers: { "X-Papertrail-Token": papertrailToken },
+      });
+      Object.assign(this.handlers, createPapertrailHandlers(this.papertrailAxios));
+    }
+
+    // GitHub module (role-level — explicitly NOT included in scope === "all")
+    if (scope === "github" && githubToken) {
+      this.githubAxios = axios.create({
+        baseURL: "https://api.github.com",
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      });
+      Object.assign(this.handlers, createGithubHandlers(this.githubAxios));
+    }
+
     this.setupHandlers();
     this.setupErrorHandling();
   }
@@ -362,6 +439,10 @@ export class CotributeMCPServer {
       ...(this.gaDataAxios ? gaTools : []),
       ...(this.customerioAxios ? customerioTools : []),
       ...(this.instantlyAxios ? instantlyTools : []),
+      ...(this.prodDbPool || this.uatDbPool ? herokuPostgresTools : []),
+      ...(this.coadminAxios ? coadminApiTools : []),
+      ...(this.papertrailAxios ? papertrailTools : []),
+      ...(this.githubAxios ? githubTools : []),
     ];
 
     const exposedTools = liteFilter

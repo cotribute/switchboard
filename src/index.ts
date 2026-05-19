@@ -3,6 +3,7 @@
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { Request, Response, NextFunction } from "express";
 import { randomUUID } from "crypto";
+import { Pool } from "pg";
 
 import { CotributeMCPServer, ModuleScope } from "./server.js";
 
@@ -37,6 +38,41 @@ const dealfrontIpEnrichKey = process.env.DEALFRONT_IP_ENRICH_API_KEY;
 
 // Optional Instantly.ai env vars
 const instantlyApiKey = process.env.INSTANTLY_API_KEY;
+
+// Optional support-research env vars (role-level endpoints, not org-level)
+const claudeDbUrl = process.env.CLAUDE_URL;
+const claudeUatDbUrl = process.env.CLAUDE_UAT_URL;
+const coadminApiBaseUrl = process.env.DREAMBIGGER_API_BASE_URL;
+const acquireApiKey = process.env.ACQUIRE_API_KEY;
+const acquireApiSecret = process.env.ACQUIRE_API_SECRET;
+const acquireApiClientId = process.env.ACQUIRE_API_CLIENT_ID;
+const papertrailToken = process.env.PAPERTRAIL_API_TOKEN;
+const githubToken = process.env.GITHUB_TOKEN;
+
+// Module-level singleton DB pools — shared across MCP sessions, lifetime of the dyno
+const prodDbPool = claudeDbUrl
+  ? new Pool({
+      connectionString: claudeDbUrl,
+      ssl: { rejectUnauthorized: false },
+      max: 3,
+    })
+  : null;
+const uatDbPool = claudeUatDbUrl
+  ? new Pool({
+      connectionString: claudeUatDbUrl,
+      ssl: { rejectUnauthorized: false },
+      max: 3,
+    })
+  : null;
+
+const coadminApiCreds =
+  acquireApiKey && acquireApiSecret && acquireApiClientId
+    ? {
+        apiKey: acquireApiKey,
+        apiSecret: acquireApiSecret,
+        clientId: acquireApiClientId,
+      }
+    : undefined;
 
 const mcpApiKey = process.env.MCP_API_KEY;
 
@@ -84,7 +120,13 @@ function createMcpHandler(scope: ModuleScope) {
         gaCredentials,
         customerioApiKey,
         customerioRegion,
-        instantlyApiKey
+        instantlyApiKey,
+        prodDbPool,
+        uatDbPool,
+        coadminApiBaseUrl,
+        coadminApiCreds,
+        papertrailToken,
+        githubToken
       );
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
@@ -202,6 +244,31 @@ app.all(
 );
 app.all("/instantly/mcp", authMiddleware, createMcpHandler("instantly"));
 app.all("/instantly/mcp/:token", authMiddleware, createMcpHandler("instantly"));
+// Support-research endpoints (role-level — not included in /mcp scope="all")
+app.all(
+  "/heroku-postgres/mcp",
+  authMiddleware,
+  createMcpHandler("heroku-postgres")
+);
+app.all(
+  "/heroku-postgres/mcp/:token",
+  authMiddleware,
+  createMcpHandler("heroku-postgres")
+);
+app.all("/coadmin-api/mcp", authMiddleware, createMcpHandler("coadmin-api"));
+app.all(
+  "/coadmin-api/mcp/:token",
+  authMiddleware,
+  createMcpHandler("coadmin-api")
+);
+app.all("/papertrail/mcp", authMiddleware, createMcpHandler("papertrail"));
+app.all(
+  "/papertrail/mcp/:token",
+  authMiddleware,
+  createMcpHandler("papertrail")
+);
+app.all("/github/mcp", authMiddleware, createMcpHandler("github"));
+app.all("/github/mcp/:token", authMiddleware, createMcpHandler("github"));
 // Full scoped endpoints
 app.all("/frontapp/mcp", authMiddleware, createMcpHandler("frontapp"));
 app.all("/frontapp/mcp/:token", authMiddleware, createMcpHandler("frontapp"));
@@ -221,6 +288,11 @@ app.listen(port, () => {
   if (gaCredentials) services.push("Google Analytics");
   if (customerioApiKey) services.push("Customer.io");
   if (instantlyApiKey) services.push("Instantly");
+  if (prodDbPool) services.push("Heroku Postgres (prod)");
+  if (uatDbPool) services.push("Heroku Postgres (sandbox)");
+  if (coadminApiBaseUrl && coadminApiCreds) services.push("coadmin-api");
+  if (papertrailToken) services.push("Papertrail");
+  if (githubToken) services.push("GitHub");
   console.log(
     `Switchboard MCP server listening on port ${port} (${services.join(" + ")})`
   );

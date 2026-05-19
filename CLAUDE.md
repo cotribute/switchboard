@@ -31,6 +31,18 @@ src/
   customerio/
     tools.ts            # Customer.io tool definitions (25 tools)
     handlers.ts         # Customer.io handlers (axios → api.customer.io/v1)
+  heroku-postgres/
+    tools.ts            # Direct-DB read tools (12 tools — user/app lookup, config, slices coadmin doesn't cover)
+    handlers.ts         # Handlers (pg.Pool × 2 — prod + sandbox; pools are module-level singletons in index.ts)
+  coadmin-api/
+    tools.ts            # coadmin-api sysadmin read tools (16 tools, decrypts ciphertext columns)
+    handlers.ts         # Handlers (axios → DREAMBIGGER_API_BASE_URL with X-Cotribute-Api-* headers)
+  papertrail/
+    tools.ts            # Papertrail tools (2 tools)
+    handlers.ts         # Handlers (axios → papertrailapp.com)
+  github/
+    tools.ts            # GitHub tools (3 tools)
+    handlers.ts         # Handlers (axios → api.github.com)
 ```
 
 **How modules compose:** Each module exports a `tools` array and a `createHandlers(axiosInstance)` function. `server.ts` merges them into a single MCP Server with one `ListToolsRequestSchema` and one `CallToolRequestSchema` handler that dispatches via a merged handler map.
@@ -76,6 +88,38 @@ git push heroku master    # Deploy to Heroku
 | `GOOGLE_ANALYTICS_CREDENTIALS` | No | Base64-encoded Google service account JSON for GA4 access |
 | `CUSTOMERIO_API_KEY` | No | Customer.io App API key |
 | `CUSTOMERIO_REGION` | No | Customer.io region: `us` (default) or `eu` |
+| `CLAUDE_URL` | No | Prod read-only Postgres replica (for `/heroku-postgres/mcp`) |
+| `CLAUDE_UAT_URL` | No | Sandbox Postgres (for `/heroku-postgres/mcp`) |
+| `DREAMBIGGER_API_BASE_URL` | No | coadmin-api base URL (for `/coadmin-api/mcp`) |
+| `ACQUIRE_API_KEY` | No | coadmin-api `X-Cotribute-Api-Key` header value |
+| `ACQUIRE_API_SECRET` | No | coadmin-api `X-Cotribute-Api-Secret` header value |
+| `ACQUIRE_API_CLIENT_ID` | No | coadmin-api `X-Cotribute-Client-Id` header value |
+| `PAPERTRAIL_API_TOKEN` | No | Papertrail API token (for `/papertrail/mcp`) |
+| `GITHUB_TOKEN` | No | GitHub fine-grained PAT (for `/github/mcp`) |
+| `GITHUB_DEFAULT_ORG` | No | Default GitHub org for `github_search_code` (default: `cotribute`) |
+
+## Support-research endpoints
+
+Four endpoints expose tools for support engineers researching customer tickets:
+
+```
+/heroku-postgres/mcp  — direct DB reads (12 tools)
+/coadmin-api/mcp      — wraps coadmin-api sysadmin GETs, decrypts ciphertext columns (16 tools)
+/papertrail/mcp       — Papertrail log search (2 tools)
+/github/mcp           — GitHub code search + file access (3 tools)
+```
+
+**Tool ownership is disjoint by construction** — there's exactly one tool per data type:
+- coadmin-api owns everything app-scoped that touches encrypted columns: decision-status logs, API request logs, core-banking logs, FIS GKYC, financial email logs. It also owns the plaintext things it covers (effectiv, Plaid IDV, Repay payments).
+- heroku-postgres owns what coadmin doesn't expose: user lookup and application discovery (the entry points; coadmin needs an application_id), config tables (flows, decision rules, FIs, products), fraud results, Vouched IDV, Stripe payments, OTP / Twilio.
+
+Defaults: transaction tools default to `env: "prod"`; config tools default to `env: "sandbox"` (clients build and test config there before promoting). DB pools are module-level singletons in `index.ts` — shared across MCP sessions for the lifetime of the dyno.
+
+**These four endpoints are role-level, not org-level.** Do not add them to any shared or org-wide MCP configuration. Support team members connect to them individually:
+- Claude Code: add to `~/.claude/settings.json` (personal) or a project-level `mcp.json` in the support working directory
+- Cowork: add as additional MCP connections in the individual team member's profile, not the org connector list
+
+Consistent with this, the four support modules are deliberately excluded from `scope === "all"` — even if someone connects to `/mcp`, they won't see the support tools. The existing org-level endpoints (`/frontapp-lite/mcp`, `/pipedrive-lite/mcp`, etc.) are unaffected.
 
 ## Auth
 

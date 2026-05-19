@@ -18,6 +18,19 @@
     "declarationMap": false,
     "sourceMap": false
   },
-  "include": ["src/index.ts", "src/server.ts", "src/frontapp/**/*.ts", "src/pipedrive/**/*.ts", "src/google-analytics/**/*.ts", "src/customerio/**/*.ts"],
+  "include": [
+    "src/index.ts",
+    "src/server.ts",
+    "src/frontapp/**/*.ts",
+    "src/pipedrive/**/*.ts",
+    "src/dealfront/**/*.ts",
+    "src/google-analytics/**/*.ts",
+    "src/customerio/**/*.ts",
+    "src/instantly/**/*.ts",
+    "src/heroku-postgres/**/*.ts",
+    "src/coadmin-api/**/*.ts",
+    "src/papertrail/**/*.ts",
+    "src/github/**/*.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }
