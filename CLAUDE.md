@@ -25,7 +25,7 @@ src/
   google-analytics/     # 3 tools — GA4 account summaries, reports, metadata
   customerio/           # 12 tools — Customer.io customers, segments, campaigns, newsletters
   instantly/            # 18 tools — Instantly.ai campaigns, leads, accounts, emails
-  heroku-postgres/      # 12 tools — Direct prod/sandbox DB reads (CX support)
+  heroku-postgres/      # 26 tools — Direct prod/sandbox DB reads (CX support)
   coadmin-api/          # 16 tools — coadmin-api sysadmin reads with ciphertext decryption (CX support)
   papertrail/           # 2 tools  — Papertrail log search (CX support)
   github/               # 3 tools  — Cotribute monorepo code search + file access (CX support)
@@ -69,7 +69,7 @@ The Switchboard `/github/mcp` is scoped to the Cotribute monorepo (bot PAT, defa
 
 Tool ownership across the four CX support endpoints is disjoint by construction — there's exactly one tool per data type:
 - **coadmin-api** owns everything app-scoped that touches encrypted columns: decision-status logs, API request logs, core-banking logs, FIS GKYC, financial email logs. It also owns the plaintext things it covers (effectiv, Plaid IDV, Repay payments).
-- **heroku-postgres** owns what coadmin doesn't expose: user lookup and application discovery (entry points — coadmin needs an application_id), config tables (flows, decision rules, FIs, products), fraud results, Vouched IDV, Stripe payments, OTP / Twilio.
+- **heroku-postgres** owns what coadmin doesn't expose: entry-point lookup (financial_users / onboarding_applications / FIs); config tables (flows + their action/transform/routing/offer/prefill internals, decision_statuses + decision_rules, FI products, share_categories/products, financial_application_mapping_templates, core_banking_configurations); transaction snapshots (financial_applications, fraud results + reasons, OFAC watchlist, credit report metadata + corelation pulls, business verification (Middesk + FIS product), Vouched IDV, Stripe payments, OTP / Twilio); plus a small legacy bridge (organizations.meta lookup, submissions → onboarding_applications resolution).
 
 Transaction tools default to `env: "prod"`; config tools default to `env: "sandbox"` (clients build and test config there before promoting). DB pools are module-level singletons in `index.ts` — shared across MCP sessions for the lifetime of the dyno.
 

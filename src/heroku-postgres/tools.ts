@@ -240,4 +240,287 @@ export const tools = [
       required: ["name"],
     },
   },
+
+  // ── Legacy bridge (default env: "prod") ──────────────────────────────────
+
+  {
+    name: "db_lookup_organization_for_fi",
+    description:
+      "Resolve the legacy WeServe `organizations` row that corresponds to an Acquire-stack financial institution. The link is `organizations.meta->>'financialInstitutionId' = fi_id`. Returns the integer org id, name, slug, and created_at. Use when a customer references a legacy org id/slug and you need to bridge to the modern FI record (or vice versa).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fi_id: {
+          type: "string",
+          description: "financial_institutions.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: ["fi_id"],
+    },
+  },
+  {
+    name: "db_get_submission_application",
+    description:
+      "Given a legacy `submissions.id` (integer), return the linked Acquire `onboarding_applications` row. Submissions is the legacy form-submission model; many CX tickets still quote a submissions.id. The FK is `submissions.onboarding_application_id`. Returns the onboarding app id, status, flow_id, financial_user_id, timestamps.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        submission_id: {
+          type: "number",
+          description: "submissions.id (integer)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: ["submission_id"],
+    },
+  },
+
+  // ── Application underwriting (default env: "prod") ───────────────────────
+
+  {
+    name: "db_get_application_financial_application",
+    description:
+      "Get the `financial_applications` row(s) for an onboarding application — the underwriting projection (loan amount, opening deposit, share product chosen, applicant/co-applicant UUIDs, payment term). Useful when the onboarding shell exists but you need the canonical underwriting snapshot.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: ["application_id"],
+    },
+  },
+  {
+    name: "db_get_watchlist_results",
+    description:
+      "Get OFAC / sanctions watchlist screening results for an application. Returns the chain of orders → reports → hits, joined via the application's financial_applications.uuid. Each hit includes score_percent, description, and the raw vendor data jsonb.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: ["application_id"],
+    },
+  },
+  {
+    name: "db_get_credit_report",
+    description:
+      "Get credit-bureau pull metadata for an application: `financial_application_credit_reports` rows (bureau, product, scope, received_at) and `corelation_credit_pulls` rows (type/user/credit_pull serials, status, error). NOTE: the raw report bodies are encrypted at rest — these are returned by coadmin-api with decryption, not here. This tool surfaces only the unencrypted envelope.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: ["application_id"],
+    },
+  },
+  {
+    name: "db_get_business_verification",
+    description:
+      "Get business-verification artifacts for an application. Returns `middesk_objects` rows (Middesk business verification — linked via external_id = application_id) plus `fis_product_evaluations` rows (FIS product-eligibility evals, joined via fis_gkyc_evaluations.onboarding_application_id).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        application_id: {
+          type: "string",
+          description: "onboarding_applications.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: ["application_id"],
+    },
+  },
+
+  // ── Flow internals (default env: "sandbox") ──────────────────────────────
+
+  {
+    name: "db_get_flow_actions",
+    description:
+      "List the configured action steps for a flow and their attached transforms. Joins `flow_action_configurations` to `flow_transform_configurations`. Each action returns trigger, handler, sort_order, settings jsonb, conditions jsonb, and (if linked) the transform's transform_key + settings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        flow_id: { type: "string", description: "flows.id (UUID)" },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
+      },
+      required: ["flow_id"],
+    },
+  },
+  {
+    name: "db_get_flow_routing",
+    description:
+      "Get server-side routing config for a flow: `flow_transition_rules` (conditional routing — step_slug → next_step_slug with conditions, in execution order) and `prefill_templates` (how external prefill data maps into the flow). Use when a flow routes unexpectedly or prefill isn't populating fields.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        flow_id: { type: "string", description: "flows.id (UUID)" },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
+      },
+      required: ["flow_id"],
+    },
+  },
+  {
+    name: "db_get_flow_offers",
+    description:
+      "List cross-sell offers configured for a flow. Joins `flow_offers` to the offered `share_products` so you see the product slug/title alongside the offer's display_order, conditions, and meta. Useful when an applicant questions an offer they were (or weren't) shown.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        flow_id: { type: "string", description: "flows.id (UUID)" },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
+      },
+      required: ["flow_id"],
+    },
+  },
+
+  // ── Product / decisioning config (default env: "sandbox") ────────────────
+
+  {
+    name: "db_get_decision_statuses",
+    description:
+      "List the decision statuses configured for a financial_institution_product. Each row: uuid, slug, title, sort_order, decision text, locked flag. Use to see the full outcome catalog for a product (e.g. all the approved/denied/manual-review variants).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fi_product_id: {
+          type: "string",
+          description: "financial_institution_products.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
+      },
+      required: ["fi_product_id"],
+    },
+  },
+  {
+    name: "db_get_fi_share_products",
+    description:
+      "List share/account products for a financial institution, joined to their share_categories. Each row: product slug/title, category slug/title, minimum_opening_deposit, maturity period, visibility_conditions jsonb. Use to see what accounts an FI exposes (Savings, Checking, Certificates, etc.).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fi_id: {
+          type: "string",
+          description: "financial_institutions.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
+      },
+      required: ["fi_id"],
+    },
+  },
+  {
+    name: "db_get_flow_mapping_templates",
+    description:
+      "Resolve the financial_application mapping templates referenced by a flow. Reads `flows.settings->'financialApplicationMapping'` (which may be a single object or array of {templateUUID, partial?, conditions?}) and joins to `financial_application_mapping_templates`. Each result: slug, template jsonb, answer_mapping_dictionary jsonb, template_engine ('handlebars' or 'jsonata'), plus the per-flow `partial` flag and `conditions`. Use when investigating why the canonical financial_application doesn't reflect a flow response.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        flow_id: { type: "string", description: "flows.id (UUID)" },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
+      },
+      required: ["flow_id"],
+    },
+  },
+
+  // ── Core banking config (default env: "sandbox") ─────────────────────────
+
+  {
+    name: "db_get_core_banking_config",
+    description:
+      "List `core_banking_configurations` for a financial institution. Each row: configuration uuid, adapter slug + description, brief description text, updated_at. This is the master per-FI/per-adapter config the runtime reads (Symitar, Corelation, DNA, Sync1, etc.). Use to discover which configs exist before fetching detail.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fi_id: {
+          type: "string",
+          description: "financial_institutions.id (UUID)",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
+      },
+      required: ["fi_id"],
+    },
+  },
+  {
+    name: "db_get_core_banking_config_detail",
+    description:
+      "Get full detail of a single `core_banking_configurations` row: settings jsonb, field_mappings jsonb, adapter info, plus any per-config decision-status mappings (corelation/symitar/sync1) that reference this configuration. Use when investigating core-banking behaviour for a specific FI+adapter combo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        config_id: {
+          type: "string",
+          description: "core_banking_configurations.uuid",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: sandbox)",
+        },
+      },
+      required: ["config_id"],
+    },
+  },
 ];
