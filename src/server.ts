@@ -423,12 +423,23 @@ export class CotributeMCPServer {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       } catch (error: any) {
-        const errorMessage =
-          error.response?.data?.message ||
-          error.response?.data?.error ||
-          error.message;
+        // Surface HTTP status, method + path, and response body so the caller
+        // can tell e.g. 401 vs 403 vs 404 — which the bare error.message can't.
+        const status = error.response?.status;
+        const method = error.config?.method?.toUpperCase();
+        const url = error.config?.url;
+        const responseBody = error.response?.data;
+        const bodyMessage =
+          (typeof responseBody === "string" ? responseBody : null) ||
+          responseBody?.message ||
+          responseBody?.error ||
+          (responseBody && JSON.stringify(responseBody).slice(0, 400));
+        const parts: string[] = [];
+        if (status) parts.push(`HTTP ${status}`);
+        if (method && url) parts.push(`${method} ${url}`);
+        parts.push(bodyMessage || error.message);
         return {
-          content: [{ type: "text", text: `Error: ${errorMessage}` }],
+          content: [{ type: "text", text: `Error: ${parts.join(" — ")}` }],
           isError: true,
         };
       }

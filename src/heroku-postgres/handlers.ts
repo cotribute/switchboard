@@ -24,12 +24,18 @@ export function createHandlers(
     // ── Transaction tools (default env: "prod") ──────────────────────────
 
     db_lookup_user: async (args) => {
+      // `financial_users` uses (login_id, login_id_type) — no plain `email`
+      // column. We don't filter by login_id_type so phone-login users still
+      // match; the caller sees the type in the result.
       const { rows } = await pool(args.env, "prod").query(
-        `SELECT fu.id AS user_id, fu.email, fu.created_at, fu.updated_at,
+        `SELECT fu.id AS user_id, fu.login_id, fu.login_id_type,
+                fu.first_name, fu.last_name, fu.login_verified,
+                fu.created_at, fu.updated_at,
                 fi.id AS fi_id, fi.name AS fi_name
          FROM financial_users fu
          JOIN financial_institutions fi ON fi.id = fu.financial_institution_id
-         WHERE fu.email = $1 LIMIT 5`,
+         WHERE fu.login_id = $1
+         ORDER BY fu.created_at DESC LIMIT 5`,
         [args.email]
       );
       return rows;
@@ -38,10 +44,10 @@ export function createHandlers(
     db_get_recent_applications: async (args) => {
       const limit = Math.min(args.limit ?? 5, 20);
       const { rows } = await pool(args.env, "prod").query(
-        `SELECT oa.id, oa.status, oa.current_slug, oa.created_at, oa.updated_at,
-                ds.name AS decision_status, f.name AS flow_name
+        `SELECT oa.id, oa.status, oa.created_at, oa.updated_at,
+                ds.title AS decision_status, f.title AS flow_name
          FROM onboarding_applications oa
-         LEFT JOIN decision_statuses ds ON ds.id = oa.decision_status_id
+         LEFT JOIN decision_statuses ds ON ds.uuid = oa.decision_status_uuid
          LEFT JOIN flows f ON f.id = oa.flow_id
          WHERE oa.financial_user_id = $1
          ORDER BY oa.updated_at DESC LIMIT $2`,
@@ -51,14 +57,20 @@ export function createHandlers(
     },
 
     db_get_application_details: async (args) => {
+      // `onboarding_applications` has no direct financial_institution_id;
+      // FI is reached via flow → financial_institution_product → FI.
       const { rows } = await pool(args.env, "prod").query(
-        `SELECT oa.id, oa.status, oa.current_slug, oa.created_at, oa.updated_at,
-                ds.name AS decision_status, f.name AS flow_name,
-                fi.name AS fi_name, fi.id AS fi_id
+        `SELECT oa.id, oa.status, oa.created_at, oa.updated_at,
+                ds.title AS decision_status,
+                f.id AS flow_id, f.title AS flow_name,
+                fip.id AS fi_product_id, fip.title AS fi_product_name,
+                fi.id AS fi_id, fi.name AS fi_name
          FROM onboarding_applications oa
-         LEFT JOIN decision_statuses ds ON ds.id = oa.decision_status_id
+         LEFT JOIN decision_statuses ds ON ds.uuid = oa.decision_status_uuid
          LEFT JOIN flows f ON f.id = oa.flow_id
-         LEFT JOIN financial_institutions fi ON fi.id = oa.financial_institution_id
+         LEFT JOIN financial_institution_products fip
+           ON fip.id = f.financial_institution_product_id
+         LEFT JOIN financial_institutions fi ON fi.id = fip.financial_institution_id
          WHERE oa.id = $1`,
         [args.application_id]
       );
@@ -67,22 +79,24 @@ export function createHandlers(
 
     db_get_fraud_results: async (args) => {
       const { rows } = await pool(args.env, "prod").query(
-        `SELECT fafr.created_at, fafr.category, fafr.scope, fafr.risk_score,
+        `SELECT fafr.created_at, fafr.category, fafr.scope, fafr.risk_score, fafr.risk_level,
                 array_agg(far.code ORDER BY far.code) FILTER (WHERE far.code IS NOT NULL) AS reason_codes
          FROM financial_application_fraud_results fafr
          LEFT JOIN financial_application_fraud_reasons far
-           ON far.financial_application_fraud_result_uuid = fafr.id
-         JOIN financial_applications fa ON fa.id = fafr.financial_application_id
+           ON far.financial_application_fraud_result_uuid = fafr.uuid
+         JOIN financial_applications fa ON fa.uuid = fafr.financial_application_uuid
          WHERE fa.onboarding_application_id = $1
-         GROUP BY fafr.id ORDER BY fafr.created_at DESC LIMIT 10`,
+         GROUP BY fafr.uuid ORDER BY fafr.created_at DESC LIMIT 10`,
         [args.application_id]
       );
       return rows;
     },
 
     db_get_vouched_results: async (args) => {
+      // `vouched_job_results` has no `result` column — useful fields are
+      // status, success (boolean), stage, plus the raw vendor payload.
       const { rows } = await pool(args.env, "prod").query(
-        `SELECT created_at, status, result
+        `SELECT created_at, status, success, stage
          FROM vouched_job_results
          WHERE onboarding_application_id = $1
          ORDER BY created_at DESC LIMIT 10`,
@@ -105,11 +119,13 @@ export function createHandlers(
     db_get_otp_history: async (args) => {
       // Sequential — Promise.all would consume 2 of the 3 pool slots per call,
       // saturating the pool under concurrent MCP sessions.
+      // `otp_codes` is polymorphic (user_id + user_type); twilio_verification_logs
+      // is FK'd directly to financial_users.
       const p = pool(args.env, "prod");
       const otp = await p.query(
         `SELECT created_at, verified_at
          FROM otp_codes
-         WHERE financial_user_id = $1
+         WHERE user_id = $1 AND user_type = 'FinancialUser'
          ORDER BY created_at DESC LIMIT 10`,
         [args.user_id]
       );
@@ -127,10 +143,11 @@ export function createHandlers(
 
     db_get_flow_config: async (args) => {
       const { rows } = await pool(args.env, "sandbox").query(
-        `SELECT f.id, f.name, f.settings, f.updated_at,
-                fi.name AS fi_name, fip.name AS product_name
+        `SELECT f.id, f.title AS name, f.slug, f.status, f.settings, f.updated_at,
+                fi.name AS fi_name, fip.title AS product_name
          FROM flows f
-         JOIN financial_institution_products fip ON fip.id = f.financial_institution_product_id
+         JOIN financial_institution_products fip
+           ON fip.id = f.financial_institution_product_id
          JOIN financial_institutions fi ON fi.id = fip.financial_institution_id
          WHERE f.id = $1`,
         [args.flow_id]
@@ -140,9 +157,12 @@ export function createHandlers(
 
     db_get_fi_flows: async (args) => {
       const { rows } = await pool(args.env, "sandbox").query(
-        `SELECT f.id, f.name, fip.name AS product_name, f.created_at, f.updated_at
+        `SELECT f.id, f.title AS name, f.slug, f.status,
+                fip.title AS product_name,
+                f.created_at, f.updated_at
          FROM flows f
-         JOIN financial_institution_products fip ON fip.id = f.financial_institution_product_id
+         JOIN financial_institution_products fip
+           ON fip.id = f.financial_institution_product_id
          WHERE fip.financial_institution_id = $1
          ORDER BY f.updated_at DESC`,
         [args.fi_id]
@@ -152,12 +172,15 @@ export function createHandlers(
 
     db_get_decision_rules: async (args) => {
       const { rows } = await pool(args.env, "sandbox").query(
-        `SELECT dr.id, dr.name, dr.conditions, ds.name AS outcome_status,
+        `SELECT dr.uuid AS id, dr.title AS name, dr.slug,
+                dr.conditions, dr.execution_order,
+                ds.title AS outcome_status,
                 dr.created_at, dr.updated_at
          FROM decision_rules dr
-         JOIN decision_statuses ds ON ds.id = dr.decision_status_id
+         JOIN decision_statuses ds ON ds.uuid = dr.decision_status_uuid
          WHERE dr.financial_institution_product_id = $1
-         ORDER BY dr.updated_at DESC`,
+           AND dr.deleted_at IS NULL
+         ORDER BY dr.execution_order ASC, dr.updated_at DESC`,
         [args.fi_product_id]
       );
       return rows;
@@ -165,10 +188,10 @@ export function createHandlers(
 
     db_get_fi_products: async (args) => {
       const { rows } = await pool(args.env, "sandbox").query(
-        `SELECT id, name, slug, meta, created_at
+        `SELECT id, title AS name, slug, meta, created_at
          FROM financial_institution_products
          WHERE financial_institution_id = $1
-         ORDER BY name`,
+         ORDER BY title`,
         [args.fi_id]
       );
       return rows;
