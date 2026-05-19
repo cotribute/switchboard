@@ -1,7 +1,7 @@
 {
   "name": "switchboard",
   "version": "2.0.0",
-  "description": "Cotribute MCP server — Front.app + Pipedrive + Dealfront + Customer.io + Instantly tools for Claude",
+  "description": "Cotribute MCP server — Front.app, Pipedrive, Dealfront, Google Analytics, Customer.io, Instantly, plus CX support endpoints (Heroku Postgres, coadmin-api, Papertrail, GitHub)",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -14,8 +14,8 @@
     "dev": "tsc && node dist/index.js",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "format": "prettier --write \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\" \"src/google-analytics/**/*.ts\" \"src/customerio/**/*.ts\" \"src/instantly/**/*.ts\"",
-    "format:check": "prettier --check \"src/index.ts\" \"src/server.ts\" \"src/frontapp/**/*.ts\" \"src/pipedrive/**/*.ts\" \"src/dealfront/**/*.ts\" \"src/google-analytics/**/*.ts\" \"src/customerio/**/*.ts\" \"src/instantly/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
     "heroku-postbuild": "npm run build"
   },
   "keywords": [
@@ -36,11 +36,13 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "axios": "^1.7.9",
     "express": "^5.2.1",
-    "google-auth-library": "^9.14.0"
+    "google-auth-library": "^9.14.0",
+    "pg": "^8.21.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.20.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^8.57.0",

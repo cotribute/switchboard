@@ -192,29 +192,6 @@ export const tools = [
 
   // ==================== Exports ====================
   {
-    name: "dealfront_create_export",
-    description:
-      "Request an async export of lead data from Dealfront. Returns an export request ID to poll for completion.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        account_id: {
-          type: "string",
-          description: "The ID of the account to export leads from.",
-        },
-        start_date: {
-          type: "string",
-          description: "Start date for the export (YYYY-MM-DD).",
-        },
-        end_date: {
-          type: "string",
-          description: "End date for the export (YYYY-MM-DD).",
-        },
-      },
-      required: ["account_id", "start_date", "end_date"],
-    },
-  },
-  {
     name: "dealfront_get_export_status",
     description:
       'Check the status of a Dealfront export request. Returns "pending", "processed", or "failed", and a download URL when ready.',

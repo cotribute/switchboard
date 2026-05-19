@@ -21,20 +21,6 @@ export function createHandlers(
       );
       return response.data;
     },
-    cio_get_customer_messages: async (args) => {
-      const { id, ...params } = args;
-      const response = await axiosInstance.get(`/customers/${id}/messages`, {
-        params,
-      });
-      return response.data;
-    },
-    cio_get_customer_activities: async (args) => {
-      const { id, ...params } = args;
-      const response = await axiosInstance.get(`/customers/${id}/activities`, {
-        params,
-      });
-      return response.data;
-    },
 
     // ==================== Segments ====================
     cio_list_segments: async (args) => {
@@ -62,33 +48,11 @@ export function createHandlers(
       const response = await axiosInstance.get(`/campaigns/${args.id}`);
       return response.data;
     },
-    cio_get_campaign_actions: async (args) => {
-      const response = await axiosInstance.get(`/campaigns/${args.id}/actions`);
-      return response.data;
-    },
     cio_get_campaign_metrics: async (args) => {
       const { id, ...params } = args;
       const response = await axiosInstance.get(`/campaigns/${id}/metrics`, {
         params,
       });
-      return response.data;
-    },
-    cio_get_campaign_journey_metrics: async (args) => {
-      const { id, ...params } = args;
-      const response = await axiosInstance.get(
-        `/campaigns/${id}/journey_metrics`,
-        { params }
-      );
-      return response.data;
-    },
-
-    // ==================== Messages ====================
-    cio_list_messages: async (args) => {
-      const response = await axiosInstance.get("/messages", { params: args });
-      return response.data;
-    },
-    cio_get_message: async (args) => {
-      const response = await axiosInstance.get(`/messages/${args.id}`);
       return response.data;
     },
 
@@ -97,10 +61,6 @@ export function createHandlers(
       const response = await axiosInstance.get("/newsletters", {
         params: args,
       });
-      return response.data;
-    },
-    cio_get_newsletter: async (args) => {
-      const response = await axiosInstance.get(`/newsletters/${args.id}`);
       return response.data;
     },
     cio_get_newsletter_metrics: async (args) => {
@@ -114,36 +74,6 @@ export function createHandlers(
     // ==================== Activities ====================
     cio_list_activities: async (args) => {
       const response = await axiosInstance.get("/activities", { params: args });
-      return response.data;
-    },
-
-    // ==================== Collections ====================
-    cio_list_collections: async (args) => {
-      const response = await axiosInstance.get("/collections", {
-        params: args,
-      });
-      return response.data;
-    },
-    cio_get_collection: async (args) => {
-      const response = await axiosInstance.get(`/collections/${args.id}`);
-      return response.data;
-    },
-
-    // ==================== Exports ====================
-    cio_list_exports: async (args) => {
-      const response = await axiosInstance.get("/exports", { params: args });
-      return response.data;
-    },
-    cio_get_export: async (args) => {
-      const response = await axiosInstance.get(`/exports/${args.id}`);
-      return response.data;
-    },
-    cio_create_customers_export: async (args) => {
-      const response = await axiosInstance.post("/exports/customers", args);
-      return response.data;
-    },
-    cio_create_deliveries_export: async (args) => {
-      const response = await axiosInstance.post("/exports/deliveries", args);
       return response.data;
     },
   };
