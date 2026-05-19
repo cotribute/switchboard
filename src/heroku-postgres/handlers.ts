@@ -207,5 +207,384 @@ export function createHandlers(
       );
       return rows;
     },
+
+    // ── Legacy bridge ────────────────────────────────────────────────────
+
+    db_lookup_organization_for_fi: async (args) => {
+      // organizations.meta is a `json` column (not jsonb); ->> still works.
+      const { rows } = await pool(args.env, "prod").query(
+        `SELECT id, name, slug, created_at, updated_at
+         FROM organizations
+         WHERE meta->>'financialInstitutionId' = $1
+         ORDER BY created_at DESC LIMIT 5`,
+        [args.fi_id]
+      );
+      return rows;
+    },
+
+    db_get_submission_application: async (args) => {
+      const { rows } = await pool(args.env, "prod").query(
+        `SELECT s.id AS submission_id, s.organization_id, s.user_id,
+                s.form_id, s.category, s.status, s.created_at, s.updated_at,
+                s.onboarding_application_id,
+                oa.status AS app_status, oa.flow_id, oa.financial_user_id,
+                oa.created_at AS app_created_at, oa.updated_at AS app_updated_at
+         FROM submissions s
+         LEFT JOIN onboarding_applications oa ON oa.id = s.onboarding_application_id
+         WHERE s.id = $1
+         LIMIT 1`,
+        [args.submission_id]
+      );
+      return rows[0] ?? null;
+    },
+
+    // ── Application underwriting ─────────────────────────────────────────
+
+    db_get_application_financial_application: async (args) => {
+      const { rows } = await pool(args.env, "prod").query(
+        `SELECT uuid, financial_institution_id, applicant_uuid, co_applicant_uuid,
+                share_product_uuid, share_product_rate_uuid, financial_business_uuid,
+                opening_deposit, loan_amount, desired_monthly_payment,
+                loan_credit_limit, loan_payment_frequency, loan_payment_term,
+                created_at, updated_at
+         FROM financial_applications
+         WHERE onboarding_application_id = $1
+           AND deleted_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT 5`,
+        [args.application_id]
+      );
+      return rows;
+    },
+
+    db_get_watchlist_results: async (args) => {
+      // Two sequential queries: orders+reports first, then hits keyed by the
+      // returned report uuids. Sequential to stay within the 3-conn pool.
+      const p = pool(args.env, "prod");
+      const orders = await p.query(
+        `SELECT o.uuid AS order_uuid, o.scope, o.subject, o.aliases,
+                o.created_at AS order_created_at,
+                r.uuid AS report_uuid, r.type AS report_type,
+                r.created_at AS report_created_at
+         FROM financial_application_watchlist_orders o
+         JOIN financial_applications fa ON fa.uuid = o.financial_application_uuid
+         LEFT JOIN financial_application_watchlist_reports r
+           ON r.financial_application_watchlist_order_uuid = o.uuid
+              AND r.deleted_at IS NULL
+         WHERE fa.onboarding_application_id = $1
+           AND o.deleted_at IS NULL
+         ORDER BY o.created_at DESC, r.created_at DESC
+         LIMIT 50`,
+        [args.application_id]
+      );
+      const reportUuids = Array.from(
+        new Set(
+          orders.rows
+            .map((r: any) => r.report_uuid)
+            .filter((u: any) => u !== null)
+        )
+      );
+      const hits =
+        reportUuids.length === 0
+          ? { rows: [] }
+          : await p.query(
+              `SELECT financial_application_watchlist_report_uuid AS report_uuid,
+                      uuid AS hit_uuid, description, score_percent, data, created_at
+               FROM financial_application_watchlist_hits
+               WHERE financial_application_watchlist_report_uuid = ANY($1::uuid[])
+                 AND deleted_at IS NULL
+               ORDER BY score_percent DESC NULLS LAST, created_at DESC
+               LIMIT 200`,
+              [reportUuids]
+            );
+      return { orders: orders.rows, hits: hits.rows };
+    },
+
+    db_get_credit_report: async (args) => {
+      // Two sequential queries; encrypted_* columns intentionally excluded —
+      // the raw report bodies are decrypted via coadmin-api, not here.
+      const p = pool(args.env, "prod");
+      const reports = await p.query(
+        `SELECT cr.uuid, cr.scope, cr.bureau, cr.product,
+                cr.received_at, cr.created_at, cr.updated_at, cr.idempotency_key
+         FROM financial_application_credit_reports cr
+         JOIN financial_applications fa ON fa.uuid = cr.financial_application_uuid
+         WHERE fa.onboarding_application_id = $1
+           AND cr.deleted_at IS NULL
+         ORDER BY cr.created_at DESC LIMIT 20`,
+        [args.application_id]
+      );
+      const pulls = await p.query(
+        `SELECT cp.uuid, cp.core_banking_request_log_uuid, cp.type_serial,
+                cp.primary_person_serial, cp.secondary_person_serial,
+                cp.credit_pull_user_serial, cp.credit_pull_serial,
+                cp.status, cp.error, cp.created_at, cp.updated_at
+         FROM corelation_credit_pulls cp
+         JOIN financial_applications fa ON fa.uuid = cp.financial_application_uuid
+         WHERE fa.onboarding_application_id = $1
+           AND cp.deleted_at IS NULL
+         ORDER BY cp.created_at DESC LIMIT 20`,
+        [args.application_id]
+      );
+      return { credit_reports: reports.rows, corelation_pulls: pulls.rows };
+    },
+
+    db_get_business_verification: async (args) => {
+      // Sequential. middesk_objects.external_id is text holding the
+      // onboarding_application_id; fis_product_evaluations joins through
+      // fis_gkyc_evaluations to reach the application.
+      const p = pool(args.env, "prod");
+      const middesk = await p.query(
+        `SELECT uuid, object, id AS middesk_id, external_id,
+                data->>'status' AS status,
+                data->'name' AS name,
+                data->'tin' AS tin_obj,
+                data->'review' AS review,
+                created_at, updated_at
+         FROM middesk_objects
+         WHERE external_id = $1
+           AND deleted_at IS NULL
+         ORDER BY updated_at DESC LIMIT 10`,
+        [args.application_id]
+      );
+      const fisProduct = await p.query(
+        `SELECT fpe.uuid, fpe.product, fpe.result, fpe."order",
+                fpe.details, fpe.errors,
+                fpe.created_at, fpe.updated_at
+         FROM fis_product_evaluations fpe
+         JOIN fis_gkyc_evaluations fge ON fge.uuid = fpe.fis_gkyc_evaluation_uuid
+         WHERE fge.onboarding_application_id = $1
+           AND fpe.deleted_at IS NULL
+         ORDER BY fpe.created_at DESC LIMIT 20`,
+        [args.application_id]
+      );
+      return {
+        middesk_objects: middesk.rows,
+        fis_product_evaluations: fisProduct.rows,
+      };
+    },
+
+    // ── Flow internals ───────────────────────────────────────────────────
+
+    db_get_flow_actions: async (args) => {
+      const { rows } = await pool(args.env, "sandbox").query(
+        `SELECT fac.uuid, fac.title, fac.trigger, fac.handler,
+                fac.sort_order, fac.settings, fac.conditions,
+                fac.created_at, fac.updated_at,
+                ftc.uuid AS transform_uuid, ftc.transform_key,
+                ftc.settings AS transform_settings
+         FROM flow_action_configurations fac
+         LEFT JOIN flow_transform_configurations ftc
+           ON ftc.uuid = fac.flow_transform_configuration_uuid
+              AND ftc.deleted_at IS NULL
+         WHERE fac.flow_id = $1
+           AND fac.deleted_at IS NULL
+         ORDER BY fac.sort_order ASC, fac.created_at ASC
+         LIMIT 100`,
+        [args.flow_id]
+      );
+      return rows;
+    },
+
+    db_get_flow_routing: async (args) => {
+      // Two sequential queries — both keyed by flow_id.
+      const p = pool(args.env, "sandbox");
+      const transitions = await p.query(
+        `SELECT uuid, step_slug, next_step_slug, title,
+                conditions, execution_order, created_at, updated_at
+         FROM flow_transition_rules
+         WHERE flow_id = $1
+           AND deleted_at IS NULL
+         ORDER BY step_slug, execution_order ASC
+         LIMIT 200`,
+        [args.flow_id]
+      );
+      const prefills = await p.query(
+        `SELECT uuid, request_domain,
+                success_redirect_base_url, error_redirect_base_url,
+                completion_redirect_base_url,
+                field_mappings, created_at, updated_at
+         FROM prefill_templates
+         WHERE flow_id = $1
+           AND deleted_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT 20`,
+        [args.flow_id]
+      );
+      return {
+        transition_rules: transitions.rows,
+        prefill_templates: prefills.rows,
+      };
+    },
+
+    db_get_flow_offers: async (args) => {
+      // flow_offers.flow_id is text (legacy schema choice), so we cast.
+      const { rows } = await pool(args.env, "sandbox").query(
+        `SELECT fo.uuid, fo.slug, fo.display_order, fo.conditions, fo.meta,
+                fo.created_at, fo.updated_at,
+                sp.uuid AS share_product_uuid, sp.slug AS share_product_slug,
+                sp.title AS share_product_title
+         FROM flow_offers fo
+         LEFT JOIN share_products sp ON sp.uuid = fo.share_product_uuid
+           AND sp.deleted_at IS NULL
+         WHERE fo.flow_id = $1::text
+           AND fo.deleted_at IS NULL
+         ORDER BY fo.display_order ASC NULLS LAST, fo.created_at ASC
+         LIMIT 100`,
+        [args.flow_id]
+      );
+      return rows;
+    },
+
+    // ── Product / decisioning config ─────────────────────────────────────
+
+    db_get_decision_statuses: async (args) => {
+      const { rows } = await pool(args.env, "sandbox").query(
+        `SELECT uuid, slug, title, sort_order, decision, locked,
+                suppress_reminder_notifications, created_at, updated_at
+         FROM decision_statuses
+         WHERE financial_institution_product_id = $1
+           AND deleted_at IS NULL
+         ORDER BY sort_order ASC, title ASC
+         LIMIT 100`,
+        [args.fi_product_id]
+      );
+      return rows;
+    },
+
+    db_get_fi_share_products: async (args) => {
+      const { rows } = await pool(args.env, "sandbox").query(
+        `SELECT sp.uuid, sp.slug, sp.title, sp.description,
+                sp.minimum_opening_deposit, sp.maximum_opening_deposit,
+                sp.maturity_period, sp.maturity_period_units,
+                sp.compound_frequency, sp.sort_order,
+                sp.visibility_conditions, sp.external_id,
+                sp.created_at, sp.updated_at,
+                sc.uuid AS category_uuid, sc.slug AS category_slug,
+                sc.title AS category_title
+         FROM share_products sp
+         JOIN share_categories sc ON sc.uuid = sp.share_category_uuid
+         WHERE sp.financial_institution_id = $1
+           AND sp.deleted_at IS NULL
+         ORDER BY sc.sort_order ASC NULLS LAST, sc.title ASC,
+                  sp.sort_order ASC NULLS LAST, sp.title ASC
+         LIMIT 200`,
+        [args.fi_id]
+      );
+      return rows;
+    },
+
+    db_get_flow_mapping_templates: async (args) => {
+      // flows.settings->'financialApplicationMapping' may be a single object
+      // or an array of {templateUUID, partial?, conditions?}. Normalise to
+      // an array via jsonb_typeof and CROSS JOIN LATERAL on jsonb_array_elements,
+      // then join to financial_application_mapping_templates by uuid.
+      const { rows } = await pool(args.env, "sandbox").query(
+        `SELECT (elem->>'templateUUID')::uuid AS template_uuid,
+                (elem->>'partial')::boolean AS is_partial,
+                elem->'conditions' AS conditions,
+                fam.slug, fam.template_engine,
+                fam.template, fam.answer_mapping_dictionary,
+                fam.created_at, fam.updated_at
+         FROM flows f
+         CROSS JOIN LATERAL jsonb_array_elements(
+           CASE
+             WHEN jsonb_typeof(f.settings->'financialApplicationMapping') = 'array'
+               THEN f.settings->'financialApplicationMapping'
+             WHEN jsonb_typeof(f.settings->'financialApplicationMapping') = 'object'
+               THEN jsonb_build_array(f.settings->'financialApplicationMapping')
+             ELSE '[]'::jsonb
+           END
+         ) AS elem
+         LEFT JOIN financial_application_mapping_templates fam
+           ON fam.uuid = (elem->>'templateUUID')::uuid
+         WHERE f.id = $1
+         LIMIT 20`,
+        [args.flow_id]
+      );
+      return rows;
+    },
+
+    // ── Core banking config ──────────────────────────────────────────────
+
+    db_get_core_banking_config: async (args) => {
+      const { rows } = await pool(args.env, "sandbox").query(
+        `SELECT cbc.uuid, cbc.description,
+                cba.slug AS adapter_slug, cba.description AS adapter_description,
+                cbc.core_banking_credential_uuid IS NOT NULL AS has_credentials,
+                cbc.created_at, cbc.updated_at
+         FROM core_banking_configurations cbc
+         JOIN core_banking_adapters cba ON cba.uuid = cbc.core_banking_adapter_uuid
+         WHERE cbc.financial_institution_id = $1
+         ORDER BY cba.slug ASC, cbc.updated_at DESC
+         LIMIT 100`,
+        [args.fi_id]
+      );
+      return rows;
+    },
+
+    db_get_core_banking_config_detail: async (args) => {
+      // Sequential — config + per-adapter decision-status mappings keyed
+      // off this config's uuid. The three mapping tables are disjoint by
+      // adapter (corelation links via adapter id directly, symitar+sync1 link
+      // via core_banking_configuration_uuid). All three checked in parallel
+      // would burn 3 of 3 pool slots — keep sequential.
+      const p = pool(args.env, "sandbox");
+      const config = await p.query(
+        `SELECT cbc.uuid, cbc.description,
+                cbc.settings, cbc.field_mappings,
+                cbc.financial_institution_id,
+                cba.uuid AS adapter_uuid, cba.slug AS adapter_slug,
+                cba.description AS adapter_description, cba.settings AS adapter_default_settings,
+                cbc.core_banking_credential_uuid IS NOT NULL AS has_credentials,
+                cbc.created_at, cbc.updated_at
+         FROM core_banking_configurations cbc
+         JOIN core_banking_adapters cba ON cba.uuid = cbc.core_banking_adapter_uuid
+         WHERE cbc.uuid = $1`,
+        [args.config_id]
+      );
+      const configRow = config.rows[0] ?? null;
+      if (!configRow) return null;
+      const symitar = await p.query(
+        `SELECT uuid, financial_institution_product_id, flow_id,
+                decision_status_uuid, lookback_period_in_days,
+                archive_aged_applications, mappings,
+                created_at, updated_at
+         FROM symitar_decision_status_mappings
+         WHERE core_banking_configuration_uuid = $1
+           AND deleted_at IS NULL`,
+        [args.config_id]
+      );
+      const sync1 = await p.query(
+        `SELECT uuid, financial_institution_product_id, flow_id,
+                decision_status_uuid, lookback_period_in_days,
+                archive_aged_applications, mappings,
+                created_at, updated_at
+         FROM sync1_decision_status_mappings
+         WHERE core_banking_configuration_uuid = $1
+           AND deleted_at IS NULL`,
+        [args.config_id]
+      );
+      // corelation mappings are keyed by adapter, not configuration —
+      // include them when the adapter is corelation so the picture is complete.
+      let corelation: { rows: any[] } = { rows: [] };
+      if (configRow.adapter_slug === "corelation") {
+        corelation = await p.query(
+          `SELECT uuid, financial_institution_product_id, flow_id,
+                  decision_status_uuid, lookback_period_in_days,
+                  archive_aged_applications, mappings,
+                  created_at, updated_at
+           FROM corelation_decision_status_mappings
+           WHERE deleted_at IS NULL
+           LIMIT 200`
+        );
+      }
+      return {
+        configuration: configRow,
+        symitar_decision_status_mappings: symitar.rows,
+        sync1_decision_status_mappings: sync1.rows,
+        corelation_decision_status_mappings: corelation.rows,
+      };
+    },
   };
 }
