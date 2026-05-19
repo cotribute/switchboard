@@ -11,7 +11,7 @@ export const tools = [
   {
     name: "papertrail_search",
     description:
-      "Search Papertrail logs. Accepts any search term — application UUID, user UUID, email address, or error string. Returns up to 50 matching log lines with timestamps and source app names. Covers the past 48 hours by default. Use system_id (from papertrail_list_systems) to filter to a specific Heroku app.",
+      "Search Papertrail logs. Accepts any search term — application UUID, user UUID, email address, or error string. Returns up to 50 matching log lines with timestamps and source app names. Covers the past 48 hours by default. Use system_id (from papertrail_list_systems) to filter to a specific Heroku app. If the response sets `truncated: true`, more matches exist — call again with `max_id` set to the value of `next_max_id` to fetch the next page.",
     inputSchema: {
       type: "object",
       properties: {
@@ -28,6 +28,11 @@ export const tools = [
           type: "number",
           description:
             "Numeric Papertrail system ID to filter to a specific Heroku app. Get IDs from papertrail_list_systems. Omit to search all apps.",
+        },
+        max_id: {
+          type: "string",
+          description:
+            "Pagination cursor: pass the `next_max_id` from a previous truncated response to fetch older matches.",
         },
       },
       required: ["query"],

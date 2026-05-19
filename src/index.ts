@@ -110,11 +110,11 @@ function createMcpHandler(scope: ModuleScope) {
     if (req.method === "POST" && !sessionId) {
       // New session — create a new MCP server + transport pair (Server is 1:1 with transport)
       const newSessionId = randomUUID();
-      const mcpServer = new CotributeMCPServer(
+      const mcpServer = new CotributeMCPServer({
+        scope,
         frontappToken,
         pipedriveToken,
         pipedriveDomain,
-        scope,
         dealfrontToken,
         dealfrontIpEnrichKey,
         gaCredentials,
@@ -126,8 +126,8 @@ function createMcpHandler(scope: ModuleScope) {
         coadminApiBaseUrl,
         coadminApiCreds,
         papertrailToken,
-        githubToken
-      );
+        githubToken,
+      });
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
       });

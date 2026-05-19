@@ -5,6 +5,21 @@ export function createHandlers(
 ): Record<string, (args: any) => Promise<any>> {
   return {
     github_search_code: async (args) => {
+      // Reject anything that could smuggle extra qualifiers into the search.
+      // Internal trust boundary, but cheap to enforce.
+      const repoShape = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+      const orgShape = /^[A-Za-z0-9_.-]+$/;
+      const langShape = /^[A-Za-z0-9_+#.-]+$/;
+      if (args.repo && !repoShape.test(args.repo)) {
+        throw new Error(`Invalid repo (expected 'owner/name'): ${args.repo}`);
+      }
+      if (args.org && !orgShape.test(args.org)) {
+        throw new Error(`Invalid org: ${args.org}`);
+      }
+      if (args.language && !langShape.test(args.language)) {
+        throw new Error(`Invalid language: ${args.language}`);
+      }
+
       let q = args.query;
       if (args.repo) {
         q += ` repo:${args.repo}`;
@@ -21,14 +36,19 @@ export function createHandlers(
         repository: item.repository.full_name,
         path: item.path,
         url: item.html_url,
-        score: item.score,
       }));
     },
 
     github_get_file: async (args) => {
+      // GitHub treats '/' in the path as a directory separator and requires
+      // it left literal; everything else in each segment must be encoded.
+      const encodedPath = String(args.path)
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/");
       const ref = args.ref ? `?ref=${encodeURIComponent(args.ref)}` : "";
       const response = await axiosInstance.get(
-        `/repos/${args.repo}/contents/${args.path}${ref}`
+        `/repos/${args.repo}/contents/${encodedPath}${ref}`
       );
       const data = response.data;
       const content = Buffer.from(data.content, "base64").toString("utf-8");

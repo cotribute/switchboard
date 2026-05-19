@@ -42,6 +42,25 @@ export type ModuleScope =
   | "papertrail"
   | "github";
 
+export interface CotributeMCPServerOptions {
+  scope: ModuleScope;
+  frontappToken: string;
+  pipedriveToken?: string;
+  pipedriveDomain?: string;
+  dealfrontToken?: string;
+  dealfrontIpEnrichKey?: string;
+  gaCredentials?: string;
+  customerioApiKey?: string;
+  customerioRegion?: string;
+  instantlyApiKey?: string;
+  prodDbPool?: Pool | null;
+  uatDbPool?: Pool | null;
+  coadminApiBaseUrl?: string;
+  coadminApiCreds?: { apiKey: string; apiSecret: string; clientId: string };
+  papertrailToken?: string;
+  githubToken?: string;
+}
+
 export class CotributeMCPServer {
   private server: Server;
   private frontappAxios: AxiosInstance | null;
@@ -59,24 +78,25 @@ export class CotributeMCPServer {
   private githubAxios: AxiosInstance | null;
   private handlers: Record<string, (args: any) => Promise<any>>;
 
-  constructor(
-    frontappToken: string,
-    pipedriveToken?: string,
-    pipedriveDomain?: string,
-    scope: ModuleScope = "frontapp",
-    dealfrontToken?: string,
-    dealfrontIpEnrichKey?: string,
-    gaCredentials?: string,
-    customerioApiKey?: string,
-    customerioRegion?: string,
-    instantlyApiKey?: string,
-    prodDbPool?: Pool | null,
-    uatDbPool?: Pool | null,
-    coadminApiBaseUrl?: string,
-    coadminApiCreds?: { apiKey: string; apiSecret: string; clientId: string },
-    papertrailToken?: string,
-    githubToken?: string
-  ) {
+  constructor(options: CotributeMCPServerOptions) {
+    const {
+      scope,
+      frontappToken,
+      pipedriveToken,
+      pipedriveDomain,
+      dealfrontToken,
+      dealfrontIpEnrichKey,
+      gaCredentials,
+      customerioApiKey,
+      customerioRegion,
+      instantlyApiKey,
+      prodDbPool,
+      uatDbPool,
+      coadminApiBaseUrl,
+      coadminApiCreds,
+      papertrailToken,
+      githubToken,
+    } = options;
     this.server = new Server(
       { name: "switchboard", version: "2.0.0" },
       { capabilities: { tools: {}, resources: {} } }
@@ -101,6 +121,7 @@ export class CotributeMCPServer {
     if (scope === "frontapp") {
       this.frontappAxios = axios.create({
         baseURL: "https://api2.frontapp.com",
+        timeout: 15000,
         headers: {
           Authorization: `Bearer ${frontappToken}`,
           "Content-Type": "application/json",
@@ -113,6 +134,7 @@ export class CotributeMCPServer {
     if (scope === "pipedrive" && pipedriveToken && pipedriveDomain) {
       this.pipedriveAxios = axios.create({
         baseURL: `https://${pipedriveDomain}.pipedrive.com/api/v1`,
+        timeout: 15000,
         headers: {
           "x-api-token": pipedriveToken,
           "Content-Type": "application/json",
@@ -128,6 +150,7 @@ export class CotributeMCPServer {
     if (scope === "dealfront" && dealfrontToken) {
       this.dealfrontAxios = axios.create({
         baseURL: "https://api.leadfeeder.com",
+        timeout: 15000,
         headers: {
           Authorization: `Token token=${dealfrontToken}`,
           Accept: "application/json",
@@ -137,6 +160,7 @@ export class CotributeMCPServer {
       if (dealfrontIpEnrichKey) {
         this.dealfrontIpEnrichAxios = axios.create({
           baseURL: "https://api.lf-discover.com",
+          timeout: 15000,
           headers: {
             "X-API-KEY": dealfrontIpEnrichKey,
             Accept: "application/json",
@@ -179,6 +203,7 @@ export class CotributeMCPServer {
       this.gaDataAxios = addAuthInterceptor(
         axios.create({
           baseURL: "https://analyticsdata.googleapis.com",
+          timeout: 15000,
           headers: { "Content-Type": "application/json" },
         })
       );
@@ -186,6 +211,7 @@ export class CotributeMCPServer {
       this.gaAdminAxios = addAuthInterceptor(
         axios.create({
           baseURL: "https://analyticsadmin.googleapis.com",
+          timeout: 15000,
           headers: { "Content-Type": "application/json" },
         })
       );
@@ -201,6 +227,7 @@ export class CotributeMCPServer {
       const region = customerioRegion === "eu" ? "api-eu" : "api";
       this.customerioAxios = axios.create({
         baseURL: `https://${region}.customer.io/v1`,
+        timeout: 15000,
         headers: {
           Authorization: `Bearer ${customerioApiKey}`,
           "Content-Type": "application/json",
@@ -216,6 +243,7 @@ export class CotributeMCPServer {
     if (scope === "instantly" && instantlyApiKey) {
       this.instantlyAxios = axios.create({
         baseURL: "https://api.instantly.ai/api/v2",
+        timeout: 15000,
         headers: {
           Authorization: `Bearer ${instantlyApiKey}`,
           "Content-Type": "application/json",
@@ -243,6 +271,7 @@ export class CotributeMCPServer {
     if (scope === "coadmin-api" && coadminApiBaseUrl && coadminApiCreds) {
       this.coadminAxios = axios.create({
         baseURL: coadminApiBaseUrl,
+        timeout: 15000,
         headers: {
           Accept: "application/json",
           "X-Cotribute-Api-Key": coadminApiCreds.apiKey,
@@ -257,6 +286,7 @@ export class CotributeMCPServer {
     if (scope === "papertrail" && papertrailToken) {
       this.papertrailAxios = axios.create({
         baseURL: "https://papertrailapp.com",
+        timeout: 15000,
         headers: { "X-Papertrail-Token": papertrailToken },
       });
       Object.assign(
@@ -269,6 +299,7 @@ export class CotributeMCPServer {
     if (scope === "github" && githubToken) {
       this.githubAxios = axios.create({
         baseURL: "https://api.github.com",
+        timeout: 15000,
         headers: {
           Authorization: `Bearer ${githubToken}`,
           Accept: "application/vnd.github+json",

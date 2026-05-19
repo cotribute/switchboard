@@ -9,6 +9,11 @@ export function createHandlers(
     configDefault: "prod" | "sandbox" = "prod"
   ): Pool {
     const effective = env ?? configDefault;
+    if (effective !== "prod" && effective !== "sandbox") {
+      throw new Error(
+        `Invalid env: ${effective}. Must be "prod" or "sandbox".`
+      );
+    }
     const p = effective === "sandbox" ? uatPool : prodPool;
     if (!p)
       throw new Error(`No database pool configured for env: ${effective}`);
@@ -98,23 +103,23 @@ export function createHandlers(
     },
 
     db_get_otp_history: async (args) => {
+      // Sequential — Promise.all would consume 2 of the 3 pool slots per call,
+      // saturating the pool under concurrent MCP sessions.
       const p = pool(args.env, "prod");
-      const [otp, twilio] = await Promise.all([
-        p.query(
-          `SELECT created_at, verified_at
-           FROM otp_codes
-           WHERE financial_user_id = $1
-           ORDER BY created_at DESC LIMIT 10`,
-          [args.user_id]
-        ),
-        p.query(
-          `SELECT created_at, status, channel, "to"
-           FROM twilio_verification_logs
-           WHERE financial_user_id = $1
-           ORDER BY created_at DESC LIMIT 10`,
-          [args.user_id]
-        ),
-      ]);
+      const otp = await p.query(
+        `SELECT created_at, verified_at
+         FROM otp_codes
+         WHERE financial_user_id = $1
+         ORDER BY created_at DESC LIMIT 10`,
+        [args.user_id]
+      );
+      const twilio = await p.query(
+        `SELECT created_at, status, channel, "to"
+         FROM twilio_verification_logs
+         WHERE financial_user_id = $1
+         ORDER BY created_at DESC LIMIT 10`,
+        [args.user_id]
+      );
       return { otp_codes: otp.rows, twilio_verifications: twilio.rows };
     },
 
@@ -170,6 +175,8 @@ export function createHandlers(
     },
 
     db_get_fi_by_name: async (args) => {
+      // % and _ in args.name are treated as ILIKE wildcards. Acceptable for an
+      // internal lookup; SQL injection isn't possible since the value is bound.
       const { rows } = await pool(args.env, "sandbox").query(
         `SELECT id, name, created_at FROM financial_institutions
          WHERE name ILIKE $1 LIMIT 10`,
