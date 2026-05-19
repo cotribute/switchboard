@@ -4,11 +4,15 @@ export const tools = [
   {
     name: "db_lookup_user",
     description:
-      "Look up a financial_user by email address. Returns user ID, financial institution name and ID, and timestamps. Use this first when you have a customer's email from a support ticket. Defaults to prod.",
+      "Look up a financial_user by login_id. Email is the most common login_id, but phone numbers also work — the result includes the matched login_id_type. Returns user ID, name, login info, financial institution, and timestamps. Use this first when you have a customer's email (or phone) from a support ticket. Defaults to prod.",
     inputSchema: {
       type: "object",
       properties: {
-        email: { type: "string", description: "Customer email address" },
+        email: {
+          type: "string",
+          description:
+            "Login identifier — typically an email address, sometimes a phone number. Matched against financial_users.login_id exactly.",
+        },
         env: {
           type: "string",
           enum: ["prod", "sandbox"],
@@ -21,7 +25,7 @@ export const tools = [
   {
     name: "db_get_recent_applications",
     description:
-      "Get the most recent onboarding applications for a financial_user. Returns application ID, status, current step slug, decision status, flow name, and timestamps. Defaults to prod.",
+      "Get the most recent onboarding applications for a financial_user. Returns application ID, status, decision status, flow name, and timestamps. Defaults to prod.",
     inputSchema: {
       type: "object",
       properties: {
@@ -82,7 +86,7 @@ export const tools = [
   {
     name: "db_get_vouched_results",
     description:
-      "Get Vouched document-verification job results for an application. Returns job status and result. Used for the older Vouched IDV flow (Plaid IDV results live in coadmin_get_plaid_idv_documents).",
+      "Get Vouched document-verification job results for an application. Returns job status, success boolean, and stage. Used for the older Vouched IDV flow (Plaid IDV results live in coadmin_get_plaid_idv_documents).",
     inputSchema: {
       type: "object",
       properties: {
