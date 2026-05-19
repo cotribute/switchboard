@@ -325,6 +325,17 @@ export class CotributeMCPServer {
   }
 
   private setupHandlers(): void {
+    // Every Switchboard tool is read-only by construction (write/admin tools
+    // were pruned in PR #3). Advertising MCP annotations lets clients —
+    // notably Cowork — skip the per-call permission prompt for safe reads.
+    // Per-tool annotations win if a tool ever sets its own.
+    const READ_ONLY_ANNOTATIONS = {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    } as const;
+
     const exposedTools = [
       ...(this.frontappAxios ? frontappTools : []),
       ...(this.pipedriveAxios ? pipedriveTools : []),
@@ -336,7 +347,10 @@ export class CotributeMCPServer {
       ...(this.coadminAxios ? coadminApiTools : []),
       ...(this.papertrailAxios ? papertrailTools : []),
       ...(this.githubAxios ? githubTools : []),
-    ];
+    ].map((tool: any) => ({
+      ...tool,
+      annotations: { ...READ_ONLY_ANNOTATIONS, ...(tool.annotations ?? {}) },
+    }));
 
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: exposedTools,
