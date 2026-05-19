@@ -88,10 +88,10 @@ Transaction tools default to `env: "prod"`; config tools default to `env: "sandb
 
 ## Deployment
 
-Deployed to Heroku app `cotribute-frontapp-mcp` at:
+Deployed to Heroku app `cotribute-switchboard` at:
 
 ```
-https://cotribute-switchboard-93f1fbb4d273.herokuapp.com
+https://switchboard.cotribute.co
 ```
 
 ```bash
