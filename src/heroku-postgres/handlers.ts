@@ -1,4 +1,17 @@
 import { Pool } from "pg";
+import {
+  SQL_PRODUCT_OVERVIEW,
+  SQL_DECISION_DISTRIBUTION,
+  SQL_FLOW_BREAKDOWN,
+  SQL_RISK_SIGNALS_VIA_APPS,
+  SQL_FIS_GKYC,
+  SQL_OFAC,
+  SQL_DECISION_AUTOMATION,
+  SQL_TIME_TO_DECISION,
+  SQL_UNIQUE_USERS,
+  SQL_MONTHLY_TREND,
+  SQL_LOAN_DOLLARS,
+} from "./business-outcomes-sql.js";
 
 export function createHandlers(
   prodPool: Pool | null,
@@ -584,6 +597,113 @@ export function createHandlers(
         symitar_decision_status_mappings: symitar.rows,
         sync1_decision_status_mappings: sync1.rows,
         corelation_decision_status_mappings: corelation.rows,
+      };
+    },
+
+    // ── Cowork-skill battery (default env: "prod") ────────────────────────
+    //
+    // Powers the `/generate-business-outcomes` Cowork skill. Runs the same
+    // 10-query battery the dreambigger Claude Code skill uses (verbatim SQL)
+    // in a single round-trip so Cowork doesn't pay a per-query LLM hop.
+
+    db_business_outcomes_battery: async (args) => {
+      const p = pool(args.env, "prod");
+      const endDate =
+        args.end_date && /^\d{4}-\d{2}-\d{2}$/.test(args.end_date)
+          ? args.end_date
+          : new Date().toISOString().slice(0, 10);
+
+      // Step 1 — Resolve the FI.
+      const raw = String(args.fi_query ?? "").trim();
+      if (!raw) {
+        return { ok: false, error: "fi_query is required." };
+      }
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          raw
+        );
+      const fiSql = isUuid
+        ? `SELECT id, name, slug, meta
+             FROM financial_institutions
+             WHERE id = $1`
+        : `SELECT id, name, slug, meta
+             FROM financial_institutions
+             WHERE name ILIKE $1 OR slug ILIKE $1
+             ORDER BY name
+             LIMIT 10`;
+      const fiParam = isUuid ? raw : `%${raw}%`;
+      const fiResult = await p.query(fiSql, [fiParam]);
+      if (fiResult.rows.length === 0) {
+        return { ok: false, error: `No financial institution matched "${raw}".` };
+      }
+      if (fiResult.rows.length > 1) {
+        return {
+          ambiguous: true,
+          candidates: fiResult.rows.map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            slug: r.slug,
+          })),
+        };
+      }
+
+      const fi = fiResult.rows[0];
+      const fiId: string = fi.id;
+      const brand: any = fi.meta?.skins?.[0]?.brand ?? {};
+
+      // Step 2 — Run the 10 battery queries in parallel.
+      const [
+        productOverview,
+        decisionDistribution,
+        flowBreakdown,
+        riskSignalsApps,
+        fisGkyc,
+        ofac,
+        decisionAutomation,
+        timeToDecision,
+        uniqueUsers,
+        monthlyTrend,
+        loanDollars,
+      ] = await Promise.all([
+        p.query(SQL_PRODUCT_OVERVIEW, [fiId]),
+        p.query(SQL_DECISION_DISTRIBUTION, [fiId]),
+        p.query(SQL_FLOW_BREAKDOWN, [fiId]),
+        p.query(SQL_RISK_SIGNALS_VIA_APPS, [fiId, endDate]),
+        p.query(SQL_FIS_GKYC, [fiId, endDate]),
+        p.query(SQL_OFAC, [fiId]),
+        p.query(SQL_DECISION_AUTOMATION, [fiId]),
+        p.query(SQL_TIME_TO_DECISION, [fiId]),
+        p.query(SQL_UNIQUE_USERS, [fiId]),
+        p.query(SQL_MONTHLY_TREND, [fiId]),
+        p.query(SQL_LOAN_DOLLARS, [fiId]),
+      ]);
+
+      return {
+        ok: true,
+        fi: {
+          id: fi.id,
+          name: fi.name,
+          slug: fi.slug,
+          brand: {
+            primary_color: brand.primaryColor ?? null,
+            secondary_color: brand.secondaryColor ?? null,
+            primary_logo: brand.primaryLogo ?? null,
+          },
+        },
+        end_date: endDate,
+        product_overview: productOverview.rows,
+        decision_distribution: decisionDistribution.rows,
+        flow_breakdown: flowBreakdown.rows,
+        risk_signals: {
+          ...(riskSignalsApps.rows[0] ?? {}),
+          ...(fisGkyc.rows[0] ?? {}),
+        },
+        ofac: ofac.rows[0] ?? null,
+        decision_automation: decisionAutomation.rows,
+        time_to_decision: timeToDecision.rows,
+        unique_users: uniqueUsers.rows[0] ?? null,
+        monthly_trend: monthlyTrend.rows,
+        loan_dollars: loanDollars.rows,
       };
     },
   };

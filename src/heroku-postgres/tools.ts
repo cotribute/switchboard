@@ -523,4 +523,32 @@ export const tools = [
       required: ["config_id"],
     },
   },
+  {
+    name: "db_business_outcomes_battery",
+    description:
+      "Runs the full standard query battery for the /generate-business-outcomes Cowork skill against the replica for one FI and returns everything the skill needs to write a markdown business-outcomes document: resolved FI + brand, product overview, decision distribution, flow breakdown, risk signals (Fraud Guard+, Cotribute IDV, ChexSystems, FIS GKYC), OFAC, decision automation, time-to-decision, unique users, monthly trend, and loan dollars. " +
+      "Pass `fi_query` as a name fragment, slug, or UUID — ambiguous matches return { ambiguous: true, candidates: [...] } instead of data so the caller can disambiguate by re-calling with the chosen id. " +
+      "Use ONLY for the business-outcomes workflow; for individual application or user lookups, prefer the focused db_* tools.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fi_query: {
+          type: "string",
+          description:
+            "Name fragment, slug, or UUID identifying the financial institution. Examples: 'Fort Financial', 'fort-financial-cu', '1588cdcc-8ec9-4c50-ac5d-ddfaf99f73d9'.",
+        },
+        end_date: {
+          type: "string",
+          description:
+            "Reporting period end (YYYY-MM-DD). Defaults to today. Used to bound the risk-signal cohort; other queries are not date-bounded (matches the validated reference behaviour).",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: ["fi_query"],
+    },
+  },
 ];
