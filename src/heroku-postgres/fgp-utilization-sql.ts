@@ -79,42 +79,44 @@ WHERE pid.created_at >= $1::date
   AND ($3::uuid IS NULL OR fi.id = $3::uuid)
 `;
 
-// Plaid IDV session initiations (abandoned + email/shareable sessions that Plaid
-// bills but that never produced a completed document). This table is added by a
+// Plaid IDV sessions (abandoned + email/shareable sessions that Plaid bills but
+// that never produced a completed document). This table is added by a
 // dreambigger migration; the handler checks for its existence before querying so
-// the tool works both before and after that migration deploys. These rows carry
-// no PII, so attribution falls back to (app_id, slug). We LEFT JOIN documents to
-// avoid double-counting an initiation that also produced a document row.
-export const SQL_FGP_PLAID_INITIATION_CANDIDATES = `
+// the tool works both before and after that migration deploys. We only pull the
+// sessions that did NOT produce a document (anti-join below); those WITH a
+// document are already counted via SQL_FGP_PLAID_DOCUMENT_CANDIDATES, which also
+// carries PII. Session-only rows have no parsed PII, so attribution falls back
+// to (app_id, slug).
+export const SQL_FGP_PLAID_SESSION_CANDIDATES = `
 SELECT
-  si.uuid,
-  si.onboarding_application_id::text AS app_id,
+  s.uuid,
+  s.onboarding_application_id::text AS app_id,
   fi.id::text AS fi_id,
   fi.name     AS fi_name,
   fi.slug     AS fi_slug,
-  si.slug,
+  s.slug,
   NULL::text  AS first_name,
   NULL::text  AS last_name,
   NULL::text  AS dob,
-  si.status,
+  s.status,
   NULL::text  AS document_status,
-  si.identity_verification_id,
-  'initiation'::text AS source,
-  si.created_at
-FROM financial_plaid_idv_session_initiations si
-JOIN onboarding_applications oa ON oa.id = si.onboarding_application_id
+  s.identity_verification_id,
+  'session'::text AS source,
+  s.created_at
+FROM financial_plaid_idv_sessions s
+JOIN onboarding_applications oa ON oa.id = s.onboarding_application_id
 JOIN financial_users fu ON fu.id = oa.financial_user_id
 JOIN financial_institutions fi ON fi.id = fu.financial_institution_id
 LEFT JOIN financial_plaid_idv_documents pid
-  ON pid.identity_verification_id = si.identity_verification_id
-WHERE si.created_at >= $1::date
-  AND si.created_at < $2::date
+  ON pid.identity_verification_id = s.identity_verification_id
+WHERE s.created_at >= $1::date
+  AND s.created_at < $2::date
   AND ($3::uuid IS NULL OR fi.id = $3::uuid)
   AND pid.uuid IS NULL
 `;
 
-export const SQL_FGP_SESSION_INITIATIONS_EXISTS = `
-SELECT to_regclass('public.financial_plaid_idv_session_initiations') IS NOT NULL AS exists
+export const SQL_FGP_SESSIONS_EXISTS = `
+SELECT to_regclass('public.financial_plaid_idv_sessions') IS NOT NULL AS exists
 `;
 
 // FI resolution for the optional fi_query filter (name fragment / slug / uuid).

@@ -44,7 +44,7 @@ Response shapes:
 
 - `{ ok: false, error }` — surface the error, stop.
 - `{ ambiguous: true, candidates: [...] }` — list candidates, ask which FI, re-call with the chosen `id` as `fi_query`.
-- `{ ok: true, window, fi_filter, session_initiations_available, notes, summary_by_fi, totals, detail?, detail_truncated? }` — proceed.
+- `{ ok: true, window, fi_filter, sessions_available, notes, summary_by_fi, totals, detail?, detail_truncated? }` — proceed.
 
 Each `summary_by_fi` row:
 
@@ -66,7 +66,7 @@ Each `summary_by_fi` row:
 FGP UTILIZATION — <start_date> → <end_date>
 FIs: <fi_count>  |  Billable inquiries: <totals.billable_inquiries>
 Vendor calls: <totals.effectiv_calls> Effectiv + <totals.plaid_calls> Plaid
-Plaid abandoned/email sessions: <"included" if session_initiations_available else "NOT captured for this window — completed-doc counts only (may undercount vs Plaid dashboard)">
+Plaid abandoned/email sessions: <"included" if sessions_available else "NOT captured for this window — completed-doc counts only (may undercount vs Plaid dashboard)">
 Generating workbook...
 ```
 
@@ -85,7 +85,7 @@ Build with Python `openpyxl` in the Cowork code environment. If `openpyxl` is un
 
 2. **Methodology** — a short text tab so finance can audit. Include verbatim:
    - The billing rule (per applicant; Effectiv and/or Plaid = 1 inquiry; joint applicants separate).
-   - The `notes` array returned by the tool (especially the Plaid-abandoned-session caveat when `session_initiations_available` is false).
+   - The `notes` array returned by the tool (especially the Plaid-abandoned-session caveat when `sessions_available` is false).
    - Person-match rule: normalized first-name token + last name + DOB; SSN/slug are fallbacks.
 
 3. **Detail** (only when `detail` is present — single-FI `include_detail` run) — one row per billable/ambiguous applicant: `FI`, `Application ID`, `Applicant` (redacted: initial + last name), `DOB (YYYY-MM)`, `Effectiv`, `Plaid`, `Classification`, `Key Confidence`. If `detail_truncated` is true, add a note row.
@@ -103,7 +103,7 @@ Build with Python `openpyxl` in the Cowork code environment. If `openpyxl` is un
 ## Reconciliation & caveats
 
 - **Effectiv counts are exact.** `effectiv_calls` reproduces the legacy monthly Effectiv query (validated against the April invoice numbers FI-by-FI).
-- **Plaid history may undercount.** Until the `financial_plaid_idv_session_initiations` table is deployed and backfilled (`session_initiations_available: false`), historical Plaid counts come only from **completed** documents — abandoned/email-only sessions that Plaid still billed are not captured. Call this out in chat for any window where `session_initiations_available` is false, so finance knows the Plaid side is a floor, not the exact Plaid invoice.
+- **Plaid history may undercount.** Until the `financial_plaid_idv_sessions` table is deployed and backfilled (`sessions_available: false`), historical Plaid counts come only from **completed** documents — abandoned/email-only sessions that Plaid still billed are not captured. Call this out in chat for any window where `sessions_available` is false, so finance knows the Plaid side is a floor, not the exact Plaid invoice.
 - **Demo/test FIs** are bucketed `non_billable_internal`, never billable.
 
 ## Out of scope

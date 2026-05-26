@@ -48,7 +48,7 @@ export interface PlaidCandidate {
   status: string | null;
   document_status: string | null;
   identity_verification_id: string | null;
-  source: "document" | "initiation";
+  source: "document" | "session";
   created_at: string;
 }
 
@@ -178,14 +178,15 @@ function deriveKey(
   if (f && l && d) return { key: `n:${f}|${l}|${d}`, confidence: "pii_full" };
   if (f && l) return { key: `n:${f}|${l}`, confidence: "pii_name" };
   // Slug fallback for rows with no recoverable PII — currently only Plaid
-  // session-initiation rows (no name/dob). These key by (app, slug), so a
-  // person whose abandoned/initiation-only Plaid session has no completed
-  // document will NOT merge with their Effectiv inquiry (different key space)
-  // and will over-count as two inquiries instead of one. Latent today
-  // (session_initiations_available is false until the dreambigger table is
-  // backfilled); reconcile same-(app, slug) initiations to their completed
-  // document's PII key in a follow-up once real initiation data exists to
-  // validate against. Surfaced in the ambiguous_slug_only audit count.
+  // session rows with no completed document (no parsed name/dob). These key by
+  // (app, slug), so a person whose abandoned/session-only Plaid IDV has no
+  // completed document will NOT merge with their Effectiv inquiry (different key
+  // space) and will over-count as two inquiries instead of one. Latent today
+  // (sessions_available is false until the dreambigger financial_plaid_idv_sessions
+  // table is backfilled); reconcile same-(app, slug) sessions to their completed
+  // document's PII key — or parse PII out of the session's `raw` — in a follow-up
+  // once real session data exists to validate against. Surfaced in the
+  // ambiguous_slug_only audit count.
   return { key: `s:${appId}|${normSlug(slug)}`, confidence: "slug" };
 }
 
@@ -235,7 +236,7 @@ function normalizePlaid(c: PlaidCandidate): NormalizedCandidate {
     dob: normDob(c.dob),
     applicant_key: key,
     // A Plaid session always represents a vendor charge (success and failed are
-    // both billed by Plaid; abandoned initiations likewise once captured).
+    // both billed by Plaid; abandoned sessions likewise once captured).
     eligible: true,
     key_confidence: confidence,
     created_at: c.created_at,

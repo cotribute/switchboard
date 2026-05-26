@@ -16,8 +16,8 @@ import {
   SQL_FGP_DEMO_FI_IDS,
   SQL_FGP_EFFECTIV_CANDIDATES,
   SQL_FGP_PLAID_DOCUMENT_CANDIDATES,
-  SQL_FGP_PLAID_INITIATION_CANDIDATES,
-  SQL_FGP_SESSION_INITIATIONS_EXISTS,
+  SQL_FGP_PLAID_SESSION_CANDIDATES,
+  SQL_FGP_SESSIONS_EXISTS,
   SQL_FGP_RESOLVE_FI_BY_UUID,
   SQL_FGP_RESOLVE_FI_BY_TEXT,
 } from "./fgp-utilization-sql.js";
@@ -775,13 +775,12 @@ export function createHandlers(
 
       const fiIdParam = fiFilter ? fiFilter.id : null;
 
-      // Does the session-initiations table exist yet? (Added by a dreambigger
-      // migration; the tool works before and after it ships.)
-      const initiationsExist = (
-        await p.query(SQL_FGP_SESSION_INITIATIONS_EXISTS)
-      ).rows[0]?.exists === true;
+      // Does the sessions table exist yet? (Added by a dreambigger migration;
+      // the tool works before and after it ships.)
+      const sessionsTableExists =
+        (await p.query(SQL_FGP_SESSIONS_EXISTS)).rows[0]?.exists === true;
 
-      const [demoRes, effectivRes, plaidDocRes, plaidInitRes] =
+      const [demoRes, effectivRes, plaidDocRes, plaidSessionRes] =
         await Promise.all([
           p.query(SQL_FGP_DEMO_FI_IDS),
           p.query(SQL_FGP_EFFECTIV_CANDIDATES, [startDate, endDate, fiIdParam]),
@@ -790,8 +789,8 @@ export function createHandlers(
             endDate,
             fiIdParam,
           ]),
-          initiationsExist
-            ? p.query(SQL_FGP_PLAID_INITIATION_CANDIDATES, [
+          sessionsTableExists
+            ? p.query(SQL_FGP_PLAID_SESSION_CANDIDATES, [
                 startDate,
                 endDate,
                 fiIdParam,
@@ -822,7 +821,7 @@ export function createHandlers(
 
       const plaid: PlaidCandidate[] = [
         ...plaidDocRes.rows,
-        ...plaidInitRes.rows,
+        ...plaidSessionRes.rows,
       ].map((r: any) => ({
         uuid: r.uuid,
         app_id: r.app_id,
@@ -848,13 +847,13 @@ export function createHandlers(
         ok: true,
         window: { start_date: startDate, end_date: endDate },
         fi_filter: fiFilter,
-        session_initiations_available: initiationsExist,
+        sessions_available: sessionsTableExists,
         notes: [
           "Billable unit = (application, person). Effectiv OR Plaid (OR both) for one person = 1 inquiry.",
           "Person key = normalized firstName|lastName|dob (Plaid has no SSN; slug 'govt-id' is not per-person).",
-          initiationsExist
-            ? "Plaid abandoned/email session initiations included from financial_plaid_idv_session_initiations."
-            : "Plaid abandoned/email sessions NOT yet captured (session-initiations table not deployed); historical Plaid counts derive from completed documents only and may undercount vs. the Plaid dashboard.",
+          sessionsTableExists
+            ? "Plaid abandoned/email sessions included from financial_plaid_idv_sessions."
+            : "Plaid abandoned/email sessions NOT yet captured (financial_plaid_idv_sessions not deployed); historical Plaid counts derive from completed documents only and may undercount vs. the Plaid dashboard.",
           "effectiv_calls / plaid_calls are raw vendor charge counts (cost side); billable_inquiries is the client-billed (revenue) side.",
         ],
         ...result,
