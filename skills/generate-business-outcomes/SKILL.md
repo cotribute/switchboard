@@ -1,13 +1,13 @@
 ---
 name: generate-business-outcomes
-description: Generate a polished markdown business-outcomes executive document for one Cotribute financial-institution customer. Resolves the FI, runs the standard 10-query data battery via the `db_business_outcomes_battery` MCP tool against the production replica, classifies product mix, picks one of three narrative templates (multi-product, account-opening-focused, lending-only), and synthesizes the document. Use when a CSM, AM, or executive asks for a business-review doc, outcomes summary, or executive recap for a credit union or other financial-institution customer of Cotribute — examples of triggers: "Generate business outcomes for Fort Financial", "Build an exec summary for Valley CU", "Outcomes doc for Members' Advantage".
+description: Generate a polished business-outcomes executive Word document (.docx) for one Cotribute financial-institution customer. Resolves the FI, runs the standard 10-query data battery via the `db_business_outcomes_battery` MCP tool against the production replica, classifies product mix, picks one of three narrative templates (multi-product, account-opening-focused, lending-only), synthesizes the document, and delivers it as a .docx in the user's workspace folder. Use when a CSM, AM, or executive asks for a business-review doc, outcomes summary, or executive recap for a credit union or other financial-institution customer of Cotribute — examples of triggers: "Generate business outcomes for Fort Financial", "Build an exec summary for Valley CU", "Outcomes doc for Members' Advantage".
 ---
 
 # Generate Business Outcomes (Cowork)
 
-This is the **Claude Cowork** edition of the business-outcomes generator. It mirrors the Claude Code skill at `dreambigger/.claude/agents/generate-business-outcomes.md` — same SQL, same templates, same terminology — but data access goes through one MCP call instead of `yarn db:replica`, and output is markdown only (no PPTX).
+This is the **Claude Cowork** edition of the business-outcomes generator. It mirrors the Claude Code skill at `dreambigger/.claude/agents/generate-business-outcomes.md` — same SQL, same templates, same terminology — but data access goes through one MCP call instead of `yarn db:replica`, and the deliverable is a Word document (`.docx`) written to the user's workspace folder.
 
-Output format mirrors the seven manually-produced reference docs (Leading Edge, Nutmeg, Capitol, Center Parc, Valley, Fort Financial, Members' Advantage).
+Output content mirrors the seven manually-produced reference docs (Leading Edge, Nutmeg, Capitol, Center Parc, Valley, Fort Financial, Members' Advantage).
 
 ## Inputs
 
@@ -16,7 +16,7 @@ Output format mirrors the seven manually-produced reference docs (Leading Edge, 
 
 ## Execution model
 
-**Fully autonomous** once the FI is unambiguously resolved. No template-confirmation prompt, no step-through. Render the markdown directly in the chat.
+**Fully autonomous** once the FI is unambiguously resolved. No template-confirmation prompt, no step-through. Compose the markdown internally as a working draft, then convert it to a Word document via the docx skill and deliver the file. Do not paste the full markdown body into chat.
 
 Exception: if the FI identifier resolves to multiple matches, list candidates and ask which one before proceeding.
 
@@ -84,12 +84,12 @@ Headline:
   - <unique_users.unique_users> unique financial-user identities
   - <approved> auto-approved
   - <median_min_to_approve> min median time-to-approval (consumer accounts)
-Generating markdown...
+Generating Word document...
 ```
 
-## Step 4 — Synthesise markdown
+## Step 4 — Synthesise markdown (internal working draft)
 
-Render the appropriate template — A (multi-product), B (AO-focused), C (lending-only) — see **Templates** section below.
+Render the appropriate template — A (multi-product), B (AO-focused), C (lending-only) — see **Templates** section below. Hold the rendered markdown in memory as a working draft; do not paste it into chat. It will be converted to .docx in Step 6.
 
 ### Universal rules — DO NOT VIOLATE
 
@@ -98,7 +98,7 @@ Render the appropriate template — A (multi-product), B (AO-focused), C (lendin
 - Never use internal Cotribute artifact names: `field_mappings`, `JSONata`, `core_banking_configurations`, `flow configuration`, `financial-application template`.
 - Never use core-internal data-model names: `type serial`, `person object`, `tin/tinType`. Use plain-English equivalents — "account type", "applicant added", "tax ID".
 - Reason codes in denial tables are pulled **verbatim** from `decision_distribution[].title`.
-- Monthly trend formatted as a code block with 3 or 4 columns depending on data density.
+- Monthly trend formatted as a code block with 3 or 4 columns depending on data density (this becomes a monospaced block in the .docx).
 - Reporting period format: `<Month D, YYYY> – <Month D, YYYY> (~N months in production)`.
 
 ### Scoping rules (validated against 7 reference FIs)
@@ -124,23 +124,39 @@ Generate 3–5 bullets matched to the data, drawing from these patterns:
 | `any flow with approval_rate < 0.30` | Diagnose the {{flow_name}} funnel. A {{approval_rate}}% approval rate suggests a fixable gap in pre-qualification or document collection. |
 | `lowest_volume_product with apps < 20 AND has_pattern` | Promote / productize the {{product_name}} segment. Only {{apps}} applications in {{N}} months despite a clean approval pattern. |
 
-## Step 6 — Deliver to user
+## Step 6 — Deliver as a Word document
 
-Render the markdown directly in the Cowork chat (no filesystem writes — Cowork has none). After the doc, print one final summary line:
-
-```
-✓ Business outcomes generated for <fi.name>
-  Template: <multi-product | ao-focused | lending-only>
-  Period: <first_app> – <end_date> (~<N> months)
-  Headline: <X> applications · <Y> approvals · <Z>% automation
-```
+1. Take the markdown body composed in Step 4 + 5 as the working draft. Do **not** paste it into chat.
+2. Read the docx skill instructions before building the file:
+   ```
+   Read /var/folders/dg/6fghj45d42j2rp4qtsqmqr0w0000gp/T/claude-hostloop-plugins/ed72d368d87bcb18/skills/docx/SKILL.md
+   ```
+3. Build a `.docx` in the user's workspace folder (`/Users/apaul/Library/CloudStorage/GoogleDrive-apaul@cotributemail.com/My Drive/Client Success/` or whatever the user has selected). Filename pattern: `{fi.slug}-business-outcomes-{YYYY-MM-DD}.docx` — e.g. `cyprus-business-outcomes-2026-05-26.docx`. Where the docx skill exposes a styling hook, use the FI's `fi.brand.primary_color` as the H1/H2 accent color; otherwise default styling is fine.
+4. Required document structure (mirrors the markdown templates below):
+   - **Title** (Word Heading 1): `{{fi_name}} — Business Outcomes with Cotribute`
+   - **Subtitle** lines (bold, normal paragraph style): reporting period + "Prepared for:" line
+   - **Section headers** (Heading 2): "Executive Summary", "1. …", "2. …", etc.
+   - **Sub-section headers** (Heading 3): per-flow split, denial-reason tables, monthly trend, time-to-decision, etc.
+   - **Body paragraphs**: default body style
+   - **Tables**: real Word tables (not pasted text), one row of header styling, borders on
+   - **Monthly-trend block**: monospaced font (Courier New / Consolas) in a single-column code-style paragraph
+   - **Footer line**: italic, bottom of doc — `Generated from production telemetry. Numbers reflect activity through end-of-day {{reporting_end_long}}.`
+5. Present the file to the user via `mcp__cowork__present_files` and include a `computer://` link as the final line of the response.
+6. After presenting the file, print one summary line:
+   ```
+   ✓ Business outcomes generated for <fi.name>
+     Template: <multi-product | ao-focused | lending-only>
+     Period: <first_app> – <end_date> (~<N> months)
+     Headline: <X> applications · <Y> approvals · <Z>% automation
+   ```
 
 ## Edge cases
 
-- **FI with no production applications** — stop after Step 1 with a note: "FI is configured but has no application data on the replica."
+- **FI with no production applications** — stop after Step 1 with a note: "FI is configured but has no application data on the replica." No .docx is produced.
 - **FI with active and sunset products** — only count products with `MAX(last_app) > end_date - 90 days` as active. Sunset products go in an "Appendix — Note on Loans" (or equivalent) at the bottom.
-- **Brand config missing** — fall back to noting "brand not configured" in the pre-flight summary. No knock-on effect on the markdown.
-- **Time-to-decision is an outlier** — if median > 30 days, the data likely contains stale `decision_status_logs` from a prior FI lifecycle. Report it but flag the value as "may include legacy data" in the markdown commentary.
+- **Brand config missing** — fall back to default docx styling and note "brand not configured" in the pre-flight summary. No knock-on effect on the document body.
+- **Time-to-decision is an outlier** — if median > 30 days, the data likely contains stale `decision_status_logs` from a prior FI lifecycle. Report it but flag the value as "may include legacy data" in the commentary.
+- **docx skill unavailable** — fall back to writing the markdown to a `.md` file in the workspace folder, present that, and note the fallback in chat so the user knows to install/enable the docx skill for next time.
 
 ## Templates
 
@@ -335,10 +351,10 @@ _Generated from production telemetry. Numbers reflect activity through end-of-da
 
 ## Reference outputs
 
-Output should be structurally equivalent to the seven manually-produced reference docs in `~/Downloads/business-outcomes/` on the dreambigger maintainer's machine. When in doubt about prose phrasing, mirror those docs' tone — operator-friendly, data-forward, no vendor pitch.
+Document content should be structurally equivalent to the seven manually-produced reference docs in `~/Downloads/business-outcomes/` on the dreambigger maintainer's machine. When in doubt about prose phrasing, mirror those docs' tone — operator-friendly, data-forward, no vendor pitch.
 
 ## Out of scope (v1)
 
-- **PPTX deck.** Cowork has no local Python runtime. A follow-up may add a `pptxgenjs`-based switchboard tool that returns a presigned S3 URL.
+- **PPTX deck.** A follow-up may add a `pptxgenjs`-based switchboard tool that returns a presigned S3 URL. The .docx covers the executive read-and-share use case.
 - **Diff mode** for re-runs. v1 just regenerates.
 - **Case-study output mode** (Story Brand framing for specific FIs). Out of scope — that remains bespoke.
