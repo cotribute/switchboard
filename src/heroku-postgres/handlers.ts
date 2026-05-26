@@ -12,6 +12,20 @@ import {
   SQL_MONTHLY_TREND,
   SQL_LOAN_DOLLARS,
 } from "./business-outcomes-sql.js";
+import {
+  SQL_FGP_DEMO_FI_IDS,
+  SQL_FGP_EFFECTIV_CANDIDATES,
+  SQL_FGP_PLAID_DOCUMENT_CANDIDATES,
+  SQL_FGP_PLAID_INITIATION_CANDIDATES,
+  SQL_FGP_SESSION_INITIATIONS_EXISTS,
+  SQL_FGP_RESOLVE_FI_BY_UUID,
+  SQL_FGP_RESOLVE_FI_BY_TEXT,
+} from "./fgp-utilization-sql.js";
+import {
+  computeFgpUtilization,
+  EffectivCandidate,
+  PlaidCandidate,
+} from "./fgp-utilization.js";
 
 export function createHandlers(
   prodPool: Pool | null,
@@ -704,6 +718,146 @@ export function createHandlers(
         unique_users: uniqueUsers.rows[0] ?? null,
         monthly_trend: monthlyTrend.rows,
         loan_dollars: loanDollars.rows,
+      };
+    },
+
+    // ── FraudGuard+ utilization battery (default env: "prod") ─────────────
+    //
+    // Powers the /generate-fgp-utilization Cowork skill. Fetches lean Effectiv +
+    // Plaid IDV candidate rows for a date window, dedupes them per applicant
+    // (Effectiv OR Plaid OR both for one person = 1 billable inquiry), and
+    // returns compact per-FI billable/non-billable aggregates. Per-applicant
+    // detail is returned only on a single-FI drill-down (include_detail).
+
+    db_fgp_utilization_battery: async (args) => {
+      const p = pool(args.env, "prod");
+
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+      const startDate = String(args.start_date ?? "").trim();
+      const endDate = String(args.end_date ?? "").trim();
+      if (!dateRe.test(startDate) || !dateRe.test(endDate)) {
+        return {
+          ok: false,
+          error:
+            "start_date and end_date are required as YYYY-MM-DD (end_date exclusive).",
+        };
+      }
+      if (startDate >= endDate) {
+        return { ok: false, error: "start_date must be before end_date." };
+      }
+
+      // Optional FI filter — resolve to a single FI id, or report ambiguity.
+      let fiFilter: { id: string; name: string; slug: string } | null = null;
+      const rawFi = String(args.fi_query ?? "").trim();
+      if (rawFi) {
+        const isUuid =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            rawFi
+          );
+        const fiRes = isUuid
+          ? await p.query(SQL_FGP_RESOLVE_FI_BY_UUID, [rawFi])
+          : await p.query(SQL_FGP_RESOLVE_FI_BY_TEXT, [`%${rawFi}%`]);
+        if (fiRes.rows.length === 0) {
+          return { ok: false, error: `No financial institution matched "${rawFi}".` };
+        }
+        if (fiRes.rows.length > 1) {
+          return {
+            ambiguous: true,
+            candidates: fiRes.rows.map((r: any) => ({
+              id: r.id,
+              name: r.name,
+              slug: r.slug,
+            })),
+          };
+        }
+        fiFilter = fiRes.rows[0];
+      }
+
+      const fiIdParam = fiFilter ? fiFilter.id : null;
+
+      // Does the session-initiations table exist yet? (Added by a dreambigger
+      // migration; the tool works before and after it ships.)
+      const initiationsExist = (
+        await p.query(SQL_FGP_SESSION_INITIATIONS_EXISTS)
+      ).rows[0]?.exists === true;
+
+      const [demoRes, effectivRes, plaidDocRes, plaidInitRes] =
+        await Promise.all([
+          p.query(SQL_FGP_DEMO_FI_IDS),
+          p.query(SQL_FGP_EFFECTIV_CANDIDATES, [startDate, endDate, fiIdParam]),
+          p.query(SQL_FGP_PLAID_DOCUMENT_CANDIDATES, [
+            startDate,
+            endDate,
+            fiIdParam,
+          ]),
+          initiationsExist
+            ? p.query(SQL_FGP_PLAID_INITIATION_CANDIDATES, [
+                startDate,
+                endDate,
+                fiIdParam,
+              ])
+            : Promise.resolve({ rows: [] as any[] }),
+        ]);
+
+      const demoFiIds = new Set<string>(
+        demoRes.rows.map((r: any) => String(r.fi_id))
+      );
+
+      const effectiv: EffectivCandidate[] = effectivRes.rows.map((r: any) => ({
+        uuid: r.uuid,
+        app_id: r.app_id,
+        fi_id: r.fi_id,
+        fi_name: r.fi_name,
+        fi_slug: r.fi_slug,
+        is_demo: demoFiIds.has(r.fi_id),
+        slug: r.slug,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        dob: r.dob,
+        ssn_last4: r.ssn_last4 || null,
+        reached_fraud_step: r.reached_fraud_step === true,
+        decision: r.decision,
+        created_at: r.created_at,
+      }));
+
+      const plaid: PlaidCandidate[] = [
+        ...plaidDocRes.rows,
+        ...plaidInitRes.rows,
+      ].map((r: any) => ({
+        uuid: r.uuid,
+        app_id: r.app_id,
+        fi_id: r.fi_id,
+        fi_name: r.fi_name,
+        fi_slug: r.fi_slug,
+        is_demo: demoFiIds.has(r.fi_id),
+        slug: r.slug,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        dob: r.dob,
+        status: r.status,
+        document_status: r.document_status ?? null,
+        identity_verification_id: r.identity_verification_id ?? null,
+        source: r.source,
+        created_at: r.created_at,
+      }));
+
+      const includeDetail = args.include_detail === true && fiFilter !== null;
+      const result = computeFgpUtilization(effectiv, plaid, { includeDetail });
+
+      return {
+        ok: true,
+        window: { start_date: startDate, end_date: endDate },
+        fi_filter: fiFilter,
+        session_initiations_available: initiationsExist,
+        notes: [
+          "Billable unit = (application, person). Effectiv OR Plaid (OR both) for one person = 1 inquiry.",
+          "Person key = normalized firstName|lastName|dob (Plaid has no SSN; slug 'govt-id' is not per-person).",
+          initiationsExist
+            ? "Plaid abandoned/email session initiations included from financial_plaid_idv_session_initiations."
+            : "Plaid abandoned/email sessions NOT yet captured (session-initiations table not deployed); historical Plaid counts derive from completed documents only and may undercount vs. the Plaid dashboard.",
+          "effectiv_calls / plaid_calls are raw vendor charge counts (cost side); billable_inquiries is the client-billed (revenue) side.",
+        ],
+        ...result,
       };
     },
   };

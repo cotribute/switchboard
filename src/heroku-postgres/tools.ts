@@ -551,4 +551,41 @@ export const tools = [
       required: ["fi_query"],
     },
   },
+  {
+    name: "db_fgp_utilization_battery",
+    description:
+      "Runs the FraudGuard+ (FGP/BG) utilization battery for the /generate-fgp-utilization Cowork skill against the replica over a date window and returns compact per-FI billable/non-billable aggregates. " +
+      "FGP is billed per APPLICANT, per inquiry: for one person, an Effectiv fraud check OR a Plaid IDV session (OR both) = ONE billable inquiry; joint applicants and beneficial owners are separate inquiries. The tool dedupes per person using normalized firstName|lastName|dob (Plaid IDV has no SSN and its 'govt-id' slug is not per-person), classifies each inquiry billable vs non-billable (failed-pre-vendor, duplicate retries, demo/test FI), and returns per-FI counts plus raw vendor-call (cost-side) counts. " +
+      "Pass start_date (inclusive) and end_date (exclusive) as YYYY-MM-DD. Omit fi_query for all FIs (monthly invoice run) or pass a name/slug/uuid to scope to one FI; an ambiguous fi_query returns { ambiguous: true, candidates: [...] }. Pass include_detail:true (single FI only) for per-applicant detail rows. " +
+      "Use ONLY for the FGP-utilization workflow.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        start_date: {
+          type: "string",
+          description: "Window start, inclusive (YYYY-MM-DD).",
+        },
+        end_date: {
+          type: "string",
+          description: "Window end, exclusive (YYYY-MM-DD).",
+        },
+        fi_query: {
+          type: "string",
+          description:
+            "Optional FI filter — name fragment, slug, or UUID. Omit to report all FIs.",
+        },
+        include_detail: {
+          type: "boolean",
+          description:
+            "When true AND fi_query resolves to a single FI, also return per-applicant detail rows (capped at 5000). Ignored for all-FI runs.",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: ["start_date", "end_date"],
+    },
+  },
 ];
