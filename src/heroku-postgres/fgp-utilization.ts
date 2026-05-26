@@ -177,6 +177,15 @@ function deriveKey(
   const d = normDob(dob);
   if (f && l && d) return { key: `n:${f}|${l}|${d}`, confidence: "pii_full" };
   if (f && l) return { key: `n:${f}|${l}`, confidence: "pii_name" };
+  // Slug fallback for rows with no recoverable PII — currently only Plaid
+  // session-initiation rows (no name/dob). These key by (app, slug), so a
+  // person whose abandoned/initiation-only Plaid session has no completed
+  // document will NOT merge with their Effectiv inquiry (different key space)
+  // and will over-count as two inquiries instead of one. Latent today
+  // (session_initiations_available is false until the dreambigger table is
+  // backfilled); reconcile same-(app, slug) initiations to their completed
+  // document's PII key in a follow-up once real initiation data exists to
+  // validate against. Surfaced in the ambiguous_slug_only audit count.
   return { key: `s:${appId}|${normSlug(slug)}`, confidence: "slug" };
 }
 
