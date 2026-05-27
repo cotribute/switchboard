@@ -11,9 +11,15 @@ Produces the monthly/weekly **FraudGuard+ utilization** workbook finance uses to
 
 - Cotribute bills clients **per applicant, per inquiry**. For one person, running Effectiv (Fraud Guard+) **and/or** Plaid IDV counts as **ONE** billable inquiry.
 - **Joint applicants and beneficial owners are separate inquiries** on the same application.
-- Our cost is vendor-side: Effectiv bills per evaluation, Plaid bills per IDV session started. The gap between what we bill clients (revenue) and what vendors bill us (cost) is the margin the CFO cares about — the report surfaces both.
+- Our cost is vendor-side: Effectiv bills per evaluation, Plaid bills per IDV session. The gap between what we bill clients (revenue) and what vendors bill us (cost) is the margin the CFO cares about — the report surfaces both.
 
 The MCP tool does all the per-applicant dedup and classification. The skill's job is to call it and format the result.
+
+**Validated rules baked into the tool** (reconciled to the Plaid invoice within ~0.04% on a sample FI):
+- **Plaid billable session = a verification step ran** (data-source/KYC **or** document **or** selfie). That's what triggers Plaid's IV-Base charge. Sessions created but abandoned before any check are not billable. Counted on a **UTC** calendar month (Plaid's billing boundary).
+- **Per-applicant dedup** uses normalized first-name-token + last name + DOB (Plaid has no SSN; the `govt-id` slug is a template type, not a person). Cross-vendor match validated ~99%.
+- **FGP counts Plaid-only applicants** (Plaid ran, Effectiv didn't) — the legacy hand-built sheets omitted these, so expect **higher** FGP totals than prior spreadsheets (this is the under-billing the CFO flagged, not an error).
+- **Effectiv reflects the DB env**: the replica is prod, so Effectiv figures are prod-only and exclude UAT (legacy sheets' "Socure" column = prod + UAT).
 
 ## Inputs
 

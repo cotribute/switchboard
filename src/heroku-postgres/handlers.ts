@@ -648,7 +648,10 @@ export function createHandlers(
       const fiParam = isUuid ? raw : `%${raw}%`;
       const fiResult = await p.query(fiSql, [fiParam]);
       if (fiResult.rows.length === 0) {
-        return { ok: false, error: `No financial institution matched "${raw}".` };
+        return {
+          ok: false,
+          error: `No financial institution matched "${raw}".`,
+        };
       }
       if (fiResult.rows.length > 1) {
         return {
@@ -758,7 +761,10 @@ export function createHandlers(
           ? await p.query(SQL_FGP_RESOLVE_FI_BY_UUID, [rawFi])
           : await p.query(SQL_FGP_RESOLVE_FI_BY_TEXT, [`%${rawFi}%`]);
         if (fiRes.rows.length === 0) {
-          return { ok: false, error: `No financial institution matched "${rawFi}".` };
+          return {
+            ok: false,
+            error: `No financial institution matched "${rawFi}".`,
+          };
         }
         if (fiRes.rows.length > 1) {
           return {
@@ -780,23 +786,26 @@ export function createHandlers(
       const sessionsTableExists =
         (await p.query(SQL_FGP_SESSIONS_EXISTS)).rows[0]?.exists === true;
 
-      const [demoRes, effectivRes, plaidDocRes, plaidSessionRes] =
-        await Promise.all([
-          p.query(SQL_FGP_DEMO_FI_IDS),
-          p.query(SQL_FGP_EFFECTIV_CANDIDATES, [startDate, endDate, fiIdParam]),
-          p.query(SQL_FGP_PLAID_DOCUMENT_CANDIDATES, [
-            startDate,
-            endDate,
-            fiIdParam,
-          ]),
-          sessionsTableExists
-            ? p.query(SQL_FGP_PLAID_SESSION_CANDIDATES, [
-                startDate,
-                endDate,
-                fiIdParam,
-              ])
-            : Promise.resolve({ rows: [] as any[] }),
-        ]);
+      // Plaid source: prefer the sessions system-of-truth (one row per session,
+      // with raw PII + the "something ran" billable filter + UTC bounds, applied
+      // in SQL). Fall back to completed documents only when the table isn't
+      // deployed yet (pre-backfill) — that under-counts abandoned/Lightning
+      // sessions but is the best available.
+      const [demoRes, effectivRes, plaidRes] = await Promise.all([
+        p.query(SQL_FGP_DEMO_FI_IDS),
+        p.query(SQL_FGP_EFFECTIV_CANDIDATES, [startDate, endDate, fiIdParam]),
+        sessionsTableExists
+          ? p.query(SQL_FGP_PLAID_SESSION_CANDIDATES, [
+              startDate,
+              endDate,
+              fiIdParam,
+            ])
+          : p.query(SQL_FGP_PLAID_DOCUMENT_CANDIDATES, [
+              startDate,
+              endDate,
+              fiIdParam,
+            ]),
+      ]);
 
       const demoFiIds = new Set<string>(
         demoRes.rows.map((r: any) => String(r.fi_id))
@@ -819,10 +828,7 @@ export function createHandlers(
         created_at: r.created_at,
       }));
 
-      const plaid: PlaidCandidate[] = [
-        ...plaidDocRes.rows,
-        ...plaidSessionRes.rows,
-      ].map((r: any) => ({
+      const plaid: PlaidCandidate[] = plaidRes.rows.map((r: any) => ({
         uuid: r.uuid,
         app_id: r.app_id,
         fi_id: r.fi_id,
@@ -849,12 +855,14 @@ export function createHandlers(
         fi_filter: fiFilter,
         sessions_available: sessionsTableExists,
         notes: [
-          "Billable unit = (application, person). Effectiv OR Plaid (OR both) for one person = 1 inquiry.",
-          "Person key = normalized firstName|lastName|dob (Plaid has no SSN; slug 'govt-id' is not per-person).",
+          "Billable unit = (application, person). Effectiv OR Plaid (OR both) for one person = 1 inquiry; joint applicants are separate.",
+          "Person key = normalized firstName-token|lastName|dob (Plaid has no SSN; slug 'govt-id' is not per-person). Cross-vendor match validated ~99% on a sample FI.",
+          "Plaid billable = a session where a verification step ran (data-source/KYC OR document OR selfie) — Plaid's IV-Base trigger. UTC calendar month. Reconciled to the Plaid invoice within ~0.04% on a sample FI; residual is created-vs-charge timing on incomplete sessions.",
           sessionsTableExists
-            ? "Plaid abandoned/email sessions included from financial_plaid_idv_sessions."
-            : "Plaid abandoned/email sessions NOT yet captured (financial_plaid_idv_sessions not deployed); historical Plaid counts derive from completed documents only and may undercount vs. the Plaid dashboard.",
-          "effectiv_calls / plaid_calls are raw vendor charge counts (cost side); billable_inquiries is the client-billed (revenue) side.",
+            ? "Plaid sourced from financial_plaid_idv_sessions (system of truth: completed + abandoned + email/shareable)."
+            : "financial_plaid_idv_sessions NOT deployed yet — Plaid falls back to completed documents only and will UNDERCOUNT abandoned/Lightning sessions. Deploy + backfill for accurate Plaid figures.",
+          "effectiv_calls / plaid_calls are raw vendor charge counts (cost side); billable_inquiries is the client-billed (revenue) side. Effectiv reflects the env in the DB (replica = prod; excludes UAT).",
+          "FGP billable here counts Plaid-only applicants (Plaid ran, Effectiv didn't), which the legacy manual process omitted — expect higher counts than prior hand-built sheets.",
         ],
         ...result,
       };

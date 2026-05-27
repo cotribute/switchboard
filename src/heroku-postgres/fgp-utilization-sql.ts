@@ -79,14 +79,26 @@ WHERE pid.created_at >= $1::date
   AND ($3::uuid IS NULL OR fi.id = $3::uuid)
 `;
 
-// Plaid IDV sessions (abandoned + email/shareable sessions that Plaid bills but
-// that never produced a completed document). This table is added by a
-// dreambigger migration; the handler checks for its existence before querying so
-// the tool works both before and after that migration deploys. We only pull the
-// sessions that did NOT produce a document (anti-join below); those WITH a
-// document are already counted via SQL_FGP_PLAID_DOCUMENT_CANDIDATES, which also
-// carries PII. Session-only rows have no parsed PII, so attribution falls back
-// to (app_id, slug).
+// Plaid IDV sessions — the system-of-truth source (financial_plaid_idv_sessions),
+// one row per session, used when the table exists (after the dreambigger
+// migration + backfill). This SUPERSEDES the documents source: the sessions
+// table captures every session (completed, abandoned, email/shareable), carries
+// the full Plaid object in `raw` (incl. PII for cross-vendor dedup), and the row
+// IS the billable unit Plaid bills Base on.
+//
+// Billable filter = "something ran": a verification step executed (data-source/KYC
+// OR document OR selfie). This is what triggers Plaid's IV-Base charge — validated
+// to within 0.04% of the Plaid invoice. Sessions abandoned before any check (just
+// created) are excluded (Plaid charges nothing).
+//
+// Window = UTC calendar month (confirmed as Plaid's billing boundary: dashboard /
+// invoice bucket by UTC day). $1/$2 are 'YYYY-MM-DD'. Cast to TIMESTAMP (not
+// date) before AT TIME ZONE 'UTC': "$1::timestamp AT TIME ZONE 'UTC'" pins the
+// boundary to UTC midnight regardless of the DB session timezone. ($1::date AT
+// TIME ZONE would first cast the date to timestamptz in the SESSION tz, shifting
+// the boundary — verified bug.)
+//
+// PII for dedup comes from raw->'user' (what we sent Plaid: name + date_of_birth).
 export const SQL_FGP_PLAID_SESSION_CANDIDATES = `
 SELECT
   s.uuid,
@@ -95,11 +107,11 @@ SELECT
   fi.name     AS fi_name,
   fi.slug     AS fi_slug,
   s.slug,
-  NULL::text  AS first_name,
-  NULL::text  AS last_name,
-  NULL::text  AS dob,
+  s.raw->'user'->'name'->>'given_name'  AS first_name,
+  s.raw->'user'->'name'->>'family_name' AS last_name,
+  s.raw->'user'->>'date_of_birth'       AS dob,
   s.status,
-  NULL::text  AS document_status,
+  s.raw->'steps'->>'documentary_verification' AS document_status,
   s.identity_verification_id,
   'session'::text AS source,
   s.created_at
@@ -107,12 +119,16 @@ FROM financial_plaid_idv_sessions s
 JOIN onboarding_applications oa ON oa.id = s.onboarding_application_id
 JOIN financial_users fu ON fu.id = oa.financial_user_id
 JOIN financial_institutions fi ON fi.id = fu.financial_institution_id
-LEFT JOIN financial_plaid_idv_documents pid
-  ON pid.identity_verification_id = s.identity_verification_id
-WHERE s.created_at >= $1::date
-  AND s.created_at < $2::date
+WHERE s.created_at >= ($1::timestamp AT TIME ZONE 'UTC')
+  AND s.created_at < ($2::timestamp AT TIME ZONE 'UTC')
   AND ($3::uuid IS NULL OR fi.id = $3::uuid)
-  AND pid.uuid IS NULL
+  AND (
+    s.raw->'kyc_check'->>'status' IN ('success','failed')
+    OR (s.raw->'steps'->>'documentary_verification' IS NOT NULL
+        AND s.raw->'steps'->>'documentary_verification' NOT IN ('not_applicable','waiting_for_prerequisite'))
+    OR (s.raw->'steps'->>'selfie_check' IS NOT NULL
+        AND s.raw->'steps'->>'selfie_check' NOT IN ('not_applicable','waiting_for_prerequisite'))
+  )
 `;
 
 export const SQL_FGP_SESSIONS_EXISTS = `
