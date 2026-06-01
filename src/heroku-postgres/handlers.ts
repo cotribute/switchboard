@@ -17,6 +17,7 @@ import {
   SQL_FGP_EFFECTIV_CANDIDATES,
   SQL_FGP_PLAID_DOCUMENT_CANDIDATES,
   SQL_FGP_PLAID_SESSION_CANDIDATES,
+  SQL_FGP_LIGHTNING_TEMPLATE_IDS,
   SQL_FGP_SESSIONS_EXISTS,
   SQL_FGP_RESOLVE_FI_BY_UUID,
   SQL_FGP_RESOLVE_FI_BY_TEXT,
@@ -791,7 +792,7 @@ export function createHandlers(
       // in SQL). Fall back to completed documents only when the table isn't
       // deployed yet (pre-backfill) — that under-counts abandoned/Lightning
       // sessions but is the best available.
-      const [demoRes, effectivRes, plaidRes] = await Promise.all([
+      const [demoRes, effectivRes, plaidRes, lightningRes] = await Promise.all([
         p.query(SQL_FGP_DEMO_FI_IDS),
         p.query(SQL_FGP_EFFECTIV_CANDIDATES, [startDate, endDate, fiIdParam]),
         sessionsTableExists
@@ -805,7 +806,13 @@ export function createHandlers(
               endDate,
               fiIdParam,
             ]),
+        sessionsTableExists
+          ? p.query(SQL_FGP_LIGHTNING_TEMPLATE_IDS)
+          : Promise.resolve({ rows: [] as { plaid_template_id: string }[] }),
       ]);
+      const lightningTemplates = new Set<string>(
+        lightningRes.rows.map((r: any) => String(r.plaid_template_id))
+      );
 
       const demoFiIds = new Set<string>(
         demoRes.rows.map((r: any) => String(r.fi_id))
@@ -844,16 +851,116 @@ export function createHandlers(
         identity_verification_id: r.identity_verification_id ?? null,
         source: r.source,
         created_at: r.created_at,
+        doc_ran: r.doc_ran === true ? true : r.doc_ran === false ? false : null,
+        selfie_ran:
+          r.selfie_ran === true ? true : r.selfie_ran === false ? false : null,
+        plaid_template_id: r.plaid_template_id ?? null,
       }));
 
       const includeDetail = args.include_detail === true && fiFilter !== null;
-      const result = computeFgpUtilization(effectiv, plaid, { includeDetail });
+      const result = computeFgpUtilization(effectiv, plaid, {
+        includeDetail,
+        lightningTemplates,
+      });
+
+      // Unit pricing from the FGP Mar 2026 invoice header. Each Effectiv eval
+      // triggers all 7 Socure modules, so each module's "qty" equals the
+      // effectiv_calls count; only the price differs. Plaid lines bill per
+      // session: IV-Base on every billable session, IV-Doc/IV-Selfie when those
+      // steps ran, IV-Lightning when the session is on a Lightning template.
+      const pricing = {
+        socure: {
+          m01_eml: 0.0317,
+          m02_pho: 0.0317,
+          m03_adr: 0.0277,
+          m04_fra: 0.1584,
+          m05_kyc: 0.1584,
+          m06_wl1: 0.0396,
+          m17_syn: 0.0554,
+        },
+        plaid: {
+          iv_base: 0.5,
+          iv_document: 0.95,
+          iv_selfie: 0.23,
+          iv_lightning: 0.8,
+        },
+      } as const;
+      const socurePerCall =
+        pricing.socure.m01_eml +
+        pricing.socure.m02_pho +
+        pricing.socure.m03_adr +
+        pricing.socure.m04_fra +
+        pricing.socure.m05_kyc +
+        pricing.socure.m06_wl1 +
+        pricing.socure.m17_syn; // $0.5029
+
+      // Enrich each FI row with the cost columns that the spreadsheet renders.
+      const summary_by_fi = result.summary_by_fi.map((s) => {
+        const socure_subtotal = round2(s.effectiv_calls * socurePerCall);
+        const plaid_base_cost = round2(s.plaid_base * pricing.plaid.iv_base);
+        const plaid_doc_cost = round2(s.plaid_doc * pricing.plaid.iv_document);
+        const plaid_selfie_cost = round2(
+          s.plaid_selfie * pricing.plaid.iv_selfie
+        );
+        const plaid_lightning_cost = round2(
+          s.plaid_lightning * pricing.plaid.iv_lightning
+        );
+        const plaid_subtotal = round2(
+          plaid_base_cost +
+            plaid_doc_cost +
+            plaid_selfie_cost +
+            plaid_lightning_cost
+        );
+        return {
+          ...s,
+          costs: {
+            socure_subtotal,
+            plaid_base_cost,
+            plaid_doc_cost,
+            plaid_selfie_cost,
+            plaid_lightning_cost,
+            plaid_subtotal,
+            grand_total: round2(socure_subtotal + plaid_subtotal),
+          },
+        };
+      });
+      const totals_costs = summary_by_fi.reduce(
+        (t, s) => {
+          t.socure_subtotal = round2(
+            t.socure_subtotal + s.costs.socure_subtotal
+          );
+          t.plaid_base_cost = round2(
+            t.plaid_base_cost + s.costs.plaid_base_cost
+          );
+          t.plaid_doc_cost = round2(t.plaid_doc_cost + s.costs.plaid_doc_cost);
+          t.plaid_selfie_cost = round2(
+            t.plaid_selfie_cost + s.costs.plaid_selfie_cost
+          );
+          t.plaid_lightning_cost = round2(
+            t.plaid_lightning_cost + s.costs.plaid_lightning_cost
+          );
+          t.plaid_subtotal = round2(t.plaid_subtotal + s.costs.plaid_subtotal);
+          t.grand_total = round2(t.grand_total + s.costs.grand_total);
+          return t;
+        },
+        {
+          socure_subtotal: 0,
+          plaid_base_cost: 0,
+          plaid_doc_cost: 0,
+          plaid_selfie_cost: 0,
+          plaid_lightning_cost: 0,
+          plaid_subtotal: 0,
+          grand_total: 0,
+        }
+      );
 
       return {
         ok: true,
         window: { start_date: startDate, end_date: endDate },
         fi_filter: fiFilter,
         sessions_available: sessionsTableExists,
+        pricing,
+        lightning_template_ids: [...lightningTemplates],
         notes: [
           "Billable unit = (application, person). Effectiv OR Plaid (OR both) for one person = 1 inquiry; joint applicants are separate.",
           "Person key = normalized firstName-token|lastName|dob (Plaid has no SSN; slug 'govt-id' is not per-person). Cross-vendor match validated ~99% on a sample FI.",
@@ -865,7 +972,13 @@ export function createHandlers(
           "FGP billable here counts Plaid-only applicants (Plaid ran, Effectiv didn't), which the legacy manual process omitted — expect higher counts than prior hand-built sheets.",
         ],
         ...result,
+        summary_by_fi,
+        totals: { ...result.totals, costs: totals_costs },
       };
     },
   };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }

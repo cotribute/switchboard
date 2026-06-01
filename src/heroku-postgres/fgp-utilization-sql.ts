@@ -112,6 +112,14 @@ SELECT
   s.raw->'user'->>'date_of_birth'       AS dob,
   s.status,
   s.raw->'steps'->>'documentary_verification' AS document_status,
+  s.raw->'template'->>'id'                   AS plaid_template_id,
+  -- Plaid line-item charge flags. IV-Base is implicit (= the row exists), so it
+  -- equals the result row count post-filter. IV-Doc/IV-Selfie fire when the
+  -- respective step ran (any status other than not_applicable / waiting_for_*).
+  ((s.raw->'steps'->>'documentary_verification' IS NOT NULL
+    AND s.raw->'steps'->>'documentary_verification' NOT IN ('not_applicable','waiting_for_prerequisite'))) AS doc_ran,
+  ((s.raw->'steps'->>'selfie_check' IS NOT NULL
+    AND s.raw->'steps'->>'selfie_check' NOT IN ('not_applicable','waiting_for_prerequisite'))) AS selfie_ran,
   s.identity_verification_id,
   'session'::text AS source,
   s.created_at
@@ -129,6 +137,25 @@ WHERE s.created_at >= ($1::timestamp AT TIME ZONE 'UTC')
     OR (s.raw->'steps'->>'selfie_check' IS NOT NULL
         AND s.raw->'steps'->>'selfie_check' NOT IN ('not_applicable','waiting_for_prerequisite'))
   )
+`;
+
+// Identify Lightning templates: Plaid's API doesn't tag a session "this was
+// Lightning", and the financial_plaid_idv_templates row has no flag either. The
+// reliable signature is in the IDV payload's kyc_check field — Lightning
+// templates run a data-source KYC check whose result is a structured object
+// (name/address/DOB summaries); Document-only templates never invoke that step
+// and the field is null. So a template is Lightning iff ANY of its sessions has
+// raw->kyc_check as a jsonb object.
+//
+// Validated on the local prod restore: this rule recovered 9,327 of the 9,522
+// Lightning sessions on the March Plaid invoice (98%). The earlier "low doc-ran
+// ratio" heuristic missed templates that ALWAYS step up to doc — e.g. Brazos's
+// Lightning template (972 sessions, 92% doc-ran) is correctly flagged here.
+export const SQL_FGP_LIGHTNING_TEMPLATE_IDS = `
+SELECT DISTINCT s.raw->'template'->>'id' AS plaid_template_id
+FROM financial_plaid_idv_sessions s
+WHERE jsonb_typeof(s.raw->'kyc_check') = 'object'
+  AND s.raw->'template'->>'id' IS NOT NULL
 `;
 
 export const SQL_FGP_SESSIONS_EXISTS = `

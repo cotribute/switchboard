@@ -50,6 +50,14 @@ export interface PlaidCandidate {
   identity_verification_id: string | null;
   source: "document" | "session";
   created_at: string;
+  // Plaid line-item charge signals — populated for "session"-source rows.
+  // doc_ran / selfie_ran fire when the corresponding step ran (any status other
+  // than not_applicable / waiting_for_prerequisite); IV-Base is implicit (every
+  // billable candidate row counts as 1 Base). plaid_template_id is matched
+  // against the Lightning set to flag IV-Lightning.
+  doc_ran?: boolean | null;
+  selfie_ran?: boolean | null;
+  plaid_template_id?: string | null;
 }
 
 type Vendor = "effectiv" | "plaid";
@@ -87,6 +95,15 @@ export interface FiSummary {
   // Cost-side raw vendor call counts (what the vendors invoice us for).
   effectiv_calls: number;
   plaid_calls: number;
+  // Plaid per-line-item charge breakdown (the columns the FGP invoice
+  // spreadsheet reports). plaid_base = plaid_calls (IV-Base is one charge per
+  // billable session). plaid_doc / plaid_selfie / plaid_lightning are subsets,
+  // not mutually exclusive: a single Lightning session that stepped up to a
+  // document upload + selfie counts in all four.
+  plaid_base: number;
+  plaid_doc: number;
+  plaid_selfie: number;
+  plaid_lightning: number;
   // Non-billable buckets.
   non_billable_failed: number; // Effectiv rows that never reached the fraud step
   non_billable_duplicate: number; // redundant vendor calls for the same person+vendor
@@ -119,6 +136,10 @@ export interface FgpUtilizationResult {
     both: number;
     effectiv_calls: number;
     plaid_calls: number;
+    plaid_base: number;
+    plaid_doc: number;
+    plaid_selfie: number;
+    plaid_lightning: number;
     non_billable_failed: number;
     non_billable_duplicate: number;
     non_billable_internal: number;
@@ -261,12 +282,13 @@ interface Inquiry {
 export function computeFgpUtilization(
   effectiv: EffectivCandidate[],
   plaid: PlaidCandidate[],
-  opts: { includeDetail?: boolean } = {}
+  opts: { includeDetail?: boolean; lightningTemplates?: Set<string> } = {}
 ): FgpUtilizationResult {
   const candidates: NormalizedCandidate[] = [
     ...effectiv.map(normalizeEffectiv),
     ...plaid.map(normalizePlaid),
   ];
+  const lightningTemplates = opts.lightningTemplates ?? new Set<string>();
 
   // Per-FI running tallies for the non-inquiry-level buckets.
   const fiMeta = new Map<
@@ -275,6 +297,9 @@ export function computeFgpUtilization(
   >();
   const effectivCalls = new Map<string, number>();
   const plaidCalls = new Map<string, number>();
+  const plaidDoc = new Map<string, number>();
+  const plaidSelfie = new Map<string, number>();
+  const plaidLightning = new Map<string, number>();
   const failedEffectiv = new Map<string, number>();
 
   // Distinct (inquiry, vendor) pairs — anything beyond the first eligible call
@@ -302,7 +327,29 @@ export function computeFgpUtilization(
     } else {
       plaidCalls.set(c.fi_id, (plaidCalls.get(c.fi_id) ?? 0) + 1);
     }
+  }
 
+  // Per-line-item Plaid charges (cost side). Walked separately on the raw plaid
+  // array so we have access to the doc_ran / selfie_ran / plaid_template_id
+  // fields the normalization step strips. IV-Base is implicit (= plaid_calls).
+  for (const p of plaid) {
+    plaidDoc.set(
+      p.fi_id,
+      (plaidDoc.get(p.fi_id) ?? 0) + (p.doc_ran === true ? 1 : 0)
+    );
+    plaidSelfie.set(
+      p.fi_id,
+      (plaidSelfie.get(p.fi_id) ?? 0) + (p.selfie_ran === true ? 1 : 0)
+    );
+    if (p.plaid_template_id && lightningTemplates.has(p.plaid_template_id)) {
+      plaidLightning.set(p.fi_id, (plaidLightning.get(p.fi_id) ?? 0) + 1);
+    }
+  }
+
+  // Second pass: build inquiries from eligible candidates with cross-vendor
+  // dedup. Kept separate from the first pass so the per-line-item Plaid walk
+  // above can sit between them and the existing dedup logic is untouched.
+  for (const c of candidates) {
     if (!c.eligible) continue;
 
     const inquiryKey = `${c.app_id}::${c.applicant_key}`;
@@ -390,6 +437,10 @@ export function computeFgpUtilization(
         both: 0,
         effectiv_calls: effectivCalls.get(fiId) ?? 0,
         plaid_calls: plaidCalls.get(fiId) ?? 0,
+        plaid_base: plaidCalls.get(fiId) ?? 0,
+        plaid_doc: plaidDoc.get(fiId) ?? 0,
+        plaid_selfie: plaidSelfie.get(fiId) ?? 0,
+        plaid_lightning: plaidLightning.get(fiId) ?? 0,
         non_billable_failed: failedEffectiv.get(fiId) ?? 0,
         non_billable_duplicate: duplicateCalls.get(fiId) ?? 0,
         non_billable_internal: 0,
@@ -430,6 +481,10 @@ export function computeFgpUtilization(
       t.both += s.both;
       t.effectiv_calls += s.effectiv_calls;
       t.plaid_calls += s.plaid_calls;
+      t.plaid_base += s.plaid_base;
+      t.plaid_doc += s.plaid_doc;
+      t.plaid_selfie += s.plaid_selfie;
+      t.plaid_lightning += s.plaid_lightning;
       t.non_billable_failed += s.non_billable_failed;
       t.non_billable_duplicate += s.non_billable_duplicate;
       t.non_billable_internal += s.non_billable_internal;
@@ -445,6 +500,10 @@ export function computeFgpUtilization(
       both: 0,
       effectiv_calls: 0,
       plaid_calls: 0,
+      plaid_base: 0,
+      plaid_doc: 0,
+      plaid_selfie: 0,
+      plaid_lightning: 0,
       non_billable_failed: 0,
       non_billable_duplicate: 0,
       non_billable_internal: 0,
