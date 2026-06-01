@@ -12,6 +12,21 @@ import {
   SQL_MONTHLY_TREND,
   SQL_LOAN_DOLLARS,
 } from "./business-outcomes-sql.js";
+import {
+  SQL_FGP_DEMO_FI_IDS,
+  SQL_FGP_EFFECTIV_CANDIDATES,
+  SQL_FGP_PLAID_DOCUMENT_CANDIDATES,
+  SQL_FGP_PLAID_SESSION_CANDIDATES,
+  SQL_FGP_LIGHTNING_TEMPLATE_IDS,
+  SQL_FGP_SESSIONS_EXISTS,
+  SQL_FGP_RESOLVE_FI_BY_UUID,
+  SQL_FGP_RESOLVE_FI_BY_TEXT,
+} from "./fgp-utilization-sql.js";
+import {
+  computeFgpUtilization,
+  EffectivCandidate,
+  PlaidCandidate,
+} from "./fgp-utilization.js";
 
 export function createHandlers(
   prodPool: Pool | null,
@@ -634,7 +649,10 @@ export function createHandlers(
       const fiParam = isUuid ? raw : `%${raw}%`;
       const fiResult = await p.query(fiSql, [fiParam]);
       if (fiResult.rows.length === 0) {
-        return { ok: false, error: `No financial institution matched "${raw}".` };
+        return {
+          ok: false,
+          error: `No financial institution matched "${raw}".`,
+        };
       }
       if (fiResult.rows.length > 1) {
         return {
@@ -706,5 +724,261 @@ export function createHandlers(
         loan_dollars: loanDollars.rows,
       };
     },
+
+    // ── FraudGuard+ utilization battery (default env: "prod") ─────────────
+    //
+    // Powers the /generate-fgp-utilization Cowork skill. Fetches lean Effectiv +
+    // Plaid IDV candidate rows for a date window, dedupes them per applicant
+    // (Effectiv OR Plaid OR both for one person = 1 billable inquiry), and
+    // returns compact per-FI billable/non-billable aggregates. Per-applicant
+    // detail is returned only on a single-FI drill-down (include_detail).
+
+    db_fgp_utilization_battery: async (args) => {
+      const p = pool(args.env, "prod");
+
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+      const startDate = String(args.start_date ?? "").trim();
+      const endDate = String(args.end_date ?? "").trim();
+      if (!dateRe.test(startDate) || !dateRe.test(endDate)) {
+        return {
+          ok: false,
+          error:
+            "start_date and end_date are required as YYYY-MM-DD (end_date exclusive).",
+        };
+      }
+      if (startDate >= endDate) {
+        return { ok: false, error: "start_date must be before end_date." };
+      }
+
+      // Optional FI filter — resolve to a single FI id, or report ambiguity.
+      let fiFilter: { id: string; name: string; slug: string } | null = null;
+      const rawFi = String(args.fi_query ?? "").trim();
+      if (rawFi) {
+        const isUuid =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            rawFi
+          );
+        const fiRes = isUuid
+          ? await p.query(SQL_FGP_RESOLVE_FI_BY_UUID, [rawFi])
+          : await p.query(SQL_FGP_RESOLVE_FI_BY_TEXT, [`%${rawFi}%`]);
+        if (fiRes.rows.length === 0) {
+          return {
+            ok: false,
+            error: `No financial institution matched "${rawFi}".`,
+          };
+        }
+        if (fiRes.rows.length > 1) {
+          return {
+            ambiguous: true,
+            candidates: fiRes.rows.map((r: any) => ({
+              id: r.id,
+              name: r.name,
+              slug: r.slug,
+            })),
+          };
+        }
+        fiFilter = fiRes.rows[0];
+      }
+
+      const fiIdParam = fiFilter ? fiFilter.id : null;
+
+      // Does the sessions table exist yet? (Added by a dreambigger migration;
+      // the tool works before and after it ships.)
+      const sessionsTableExists =
+        (await p.query(SQL_FGP_SESSIONS_EXISTS)).rows[0]?.exists === true;
+
+      // Plaid source: prefer the sessions system-of-truth (one row per session,
+      // with raw PII + the "something ran" billable filter + UTC bounds, applied
+      // in SQL). Fall back to completed documents only when the table isn't
+      // deployed yet (pre-backfill) — that under-counts abandoned/Lightning
+      // sessions but is the best available.
+      const [demoRes, effectivRes, plaidRes, lightningRes] = await Promise.all([
+        p.query(SQL_FGP_DEMO_FI_IDS),
+        p.query(SQL_FGP_EFFECTIV_CANDIDATES, [startDate, endDate, fiIdParam]),
+        sessionsTableExists
+          ? p.query(SQL_FGP_PLAID_SESSION_CANDIDATES, [
+              startDate,
+              endDate,
+              fiIdParam,
+            ])
+          : p.query(SQL_FGP_PLAID_DOCUMENT_CANDIDATES, [
+              startDate,
+              endDate,
+              fiIdParam,
+            ]),
+        sessionsTableExists
+          ? p.query(SQL_FGP_LIGHTNING_TEMPLATE_IDS)
+          : Promise.resolve({ rows: [] as { plaid_template_id: string }[] }),
+      ]);
+      const lightningTemplates = new Set<string>(
+        lightningRes.rows.map((r: any) => String(r.plaid_template_id))
+      );
+
+      const demoFiIds = new Set<string>(
+        demoRes.rows.map((r: any) => String(r.fi_id))
+      );
+
+      const effectiv: EffectivCandidate[] = effectivRes.rows.map((r: any) => ({
+        uuid: r.uuid,
+        app_id: r.app_id,
+        fi_id: r.fi_id,
+        fi_name: r.fi_name,
+        fi_slug: r.fi_slug,
+        is_demo: demoFiIds.has(r.fi_id),
+        slug: r.slug,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        dob: r.dob,
+        ssn_last4: r.ssn_last4 || null,
+        reached_fraud_step: r.reached_fraud_step === true,
+        decision: r.decision,
+        created_at: r.created_at,
+      }));
+
+      const plaid: PlaidCandidate[] = plaidRes.rows.map((r: any) => ({
+        uuid: r.uuid,
+        app_id: r.app_id,
+        fi_id: r.fi_id,
+        fi_name: r.fi_name,
+        fi_slug: r.fi_slug,
+        is_demo: demoFiIds.has(r.fi_id),
+        slug: r.slug,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        dob: r.dob,
+        status: r.status,
+        document_status: r.document_status ?? null,
+        identity_verification_id: r.identity_verification_id ?? null,
+        source: r.source,
+        created_at: r.created_at,
+        doc_ran: r.doc_ran === true ? true : r.doc_ran === false ? false : null,
+        selfie_ran:
+          r.selfie_ran === true ? true : r.selfie_ran === false ? false : null,
+        plaid_template_id: r.plaid_template_id ?? null,
+      }));
+
+      const includeDetail = args.include_detail === true && fiFilter !== null;
+      const result = computeFgpUtilization(effectiv, plaid, {
+        includeDetail,
+        lightningTemplates,
+      });
+
+      // Unit pricing from the FGP Mar 2026 invoice header. Each Effectiv eval
+      // triggers all 7 Socure modules, so each module's "qty" equals the
+      // effectiv_calls count; only the price differs. Plaid lines bill per
+      // session: IV-Base on every billable session, IV-Doc/IV-Selfie when those
+      // steps ran, IV-Lightning when the session is on a Lightning template.
+      const pricing = {
+        socure: {
+          m01_eml: 0.0317,
+          m02_pho: 0.0317,
+          m03_adr: 0.0277,
+          m04_fra: 0.1584,
+          m05_kyc: 0.1584,
+          m06_wl1: 0.0396,
+          m17_syn: 0.0554,
+        },
+        plaid: {
+          iv_base: 0.5,
+          iv_document: 0.95,
+          iv_selfie: 0.23,
+          iv_lightning: 0.8,
+        },
+      } as const;
+      const socurePerCall =
+        pricing.socure.m01_eml +
+        pricing.socure.m02_pho +
+        pricing.socure.m03_adr +
+        pricing.socure.m04_fra +
+        pricing.socure.m05_kyc +
+        pricing.socure.m06_wl1 +
+        pricing.socure.m17_syn; // $0.5029
+
+      // Enrich each FI row with the cost columns that the spreadsheet renders.
+      const summary_by_fi = result.summary_by_fi.map((s) => {
+        const socure_subtotal = round2(s.effectiv_calls * socurePerCall);
+        const plaid_base_cost = round2(s.plaid_base * pricing.plaid.iv_base);
+        const plaid_doc_cost = round2(s.plaid_doc * pricing.plaid.iv_document);
+        const plaid_selfie_cost = round2(
+          s.plaid_selfie * pricing.plaid.iv_selfie
+        );
+        const plaid_lightning_cost = round2(
+          s.plaid_lightning * pricing.plaid.iv_lightning
+        );
+        const plaid_subtotal = round2(
+          plaid_base_cost +
+            plaid_doc_cost +
+            plaid_selfie_cost +
+            plaid_lightning_cost
+        );
+        return {
+          ...s,
+          costs: {
+            socure_subtotal,
+            plaid_base_cost,
+            plaid_doc_cost,
+            plaid_selfie_cost,
+            plaid_lightning_cost,
+            plaid_subtotal,
+            grand_total: round2(socure_subtotal + plaid_subtotal),
+          },
+        };
+      });
+      const totals_costs = summary_by_fi.reduce(
+        (t, s) => {
+          t.socure_subtotal = round2(
+            t.socure_subtotal + s.costs.socure_subtotal
+          );
+          t.plaid_base_cost = round2(
+            t.plaid_base_cost + s.costs.plaid_base_cost
+          );
+          t.plaid_doc_cost = round2(t.plaid_doc_cost + s.costs.plaid_doc_cost);
+          t.plaid_selfie_cost = round2(
+            t.plaid_selfie_cost + s.costs.plaid_selfie_cost
+          );
+          t.plaid_lightning_cost = round2(
+            t.plaid_lightning_cost + s.costs.plaid_lightning_cost
+          );
+          t.plaid_subtotal = round2(t.plaid_subtotal + s.costs.plaid_subtotal);
+          t.grand_total = round2(t.grand_total + s.costs.grand_total);
+          return t;
+        },
+        {
+          socure_subtotal: 0,
+          plaid_base_cost: 0,
+          plaid_doc_cost: 0,
+          plaid_selfie_cost: 0,
+          plaid_lightning_cost: 0,
+          plaid_subtotal: 0,
+          grand_total: 0,
+        }
+      );
+
+      return {
+        ok: true,
+        window: { start_date: startDate, end_date: endDate },
+        fi_filter: fiFilter,
+        sessions_available: sessionsTableExists,
+        pricing,
+        lightning_template_ids: [...lightningTemplates],
+        notes: [
+          "Billable unit = (application, person). Effectiv OR Plaid (OR both) for one person = 1 inquiry; joint applicants are separate.",
+          "Person key = normalized firstName-token|lastName|dob (Plaid has no SSN; slug 'govt-id' is not per-person). Cross-vendor match validated ~99% on a sample FI.",
+          "Plaid billable = a session where a verification step ran (data-source/KYC OR document OR selfie) — Plaid's IV-Base trigger. UTC calendar month. Reconciled to the Plaid invoice within ~0.04% on a sample FI; residual is created-vs-charge timing on incomplete sessions.",
+          sessionsTableExists
+            ? "Plaid sourced from financial_plaid_idv_sessions (system of truth: completed + abandoned + email/shareable)."
+            : "financial_plaid_idv_sessions NOT deployed yet — Plaid falls back to completed documents only and will UNDERCOUNT abandoned/Lightning sessions. Deploy + backfill for accurate Plaid figures.",
+          "effectiv_calls / plaid_calls are raw vendor charge counts (cost side); billable_inquiries is the client-billed (revenue) side. Effectiv reflects the env in the DB (replica = prod; excludes UAT).",
+          "FGP billable here counts Plaid-only applicants (Plaid ran, Effectiv didn't), which the legacy manual process omitted — expect higher counts than prior hand-built sheets.",
+        ],
+        ...result,
+        summary_by_fi,
+        totals: { ...result.totals, costs: totals_costs },
+      };
+    },
   };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
