@@ -136,6 +136,7 @@ export function createHandlers(
 
     aia_list_rates: (args) =>
       get("/rates", {
+        kind: args.kind,
         category: args.category,
         limit: args.limit !== undefined ? clamp(args.limit, 1, 500) : undefined,
         cursor: args.cursor,

@@ -202,13 +202,23 @@ export const tools = [
     name: "aia_list_rates",
     description:
       "Rates across all institutions — the comparison set for market-wide rate " +
-      "questions (e.g. 'median 12-month CD rate').",
+      "questions (e.g. 'median 12-month CD rate'). Prefer the `kind` filter: it is a " +
+      "reliable derived enum, whereas `category` is a free-text substring match against " +
+      "raw labels (e.g. category='cd' returns nothing; kind='deposit' captures CDs).",
     inputSchema: {
       type: "object",
       properties: {
+        kind: {
+          type: "string",
+          enum: ["deposit", "loan", "fee", "reward", "unknown"],
+          description:
+            "Normalized rate class (reliable). CDs/certificates fall under 'deposit'. " +
+            "Distinct from research-job kind.",
+        },
         category: {
           type: "string",
-          description: "Category substring, e.g. 'deposits', 'cd'.",
+          description:
+            "Free-text category substring (e.g. 'Checking Accounts'); less reliable than kind.",
         },
         limit: { type: "number", description: "1–500." },
         cursor: { type: "string", description: "Pagination offset." },
