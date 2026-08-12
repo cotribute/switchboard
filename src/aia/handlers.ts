@@ -30,6 +30,18 @@ const SEARCH_KEYS = [
   "order",
 ] as const;
 
+// section value -> path suffix under /institutions/{id}
+const SECTION_PATHS: Record<string, string> = {
+  profile: "",
+  products: "/products",
+  top_products: "/top-products",
+  personas: "/personas",
+  ai_strategy: "/ai-strategy",
+  highlights: "/highlights",
+  weekly_market: "/weekly-market",
+  cta_urls: "/cta-urls",
+};
+
 function pick(args: any, keys: readonly string[]): Record<string, any> {
   const out: Record<string, any> = {};
   for (const k of keys) if (args?.[k] !== undefined) out[k] = args[k];
@@ -78,36 +90,29 @@ export function createHandlers(
     aia_list_segments: () => get("/segments"),
 
     // ── Institution research ────────────────────────────────────────────────
-    aia_get_institution_profile: (args) => get(`/institutions/${seg(args.id)}`),
-
     aia_get_institution_bundle: (args) =>
       get(`/institutions/${seg(args.id)}/bundle`),
 
-    aia_get_products: (args) => {
-      if (args.category && !["deposits", "loans"].includes(args.category)) {
+    aia_get_institution_section: (args) => {
+      const suffix = SECTION_PATHS[args.section];
+      if (suffix === undefined) {
+        throw new Error(
+          `Unknown section '${args.section}'. Valid: ${Object.keys(SECTION_PATHS).join(", ")}`
+        );
+      }
+      if (
+        args.section === "products" &&
+        args.category &&
+        !["deposits", "loans"].includes(args.category)
+      ) {
         throw new Error("category must be 'deposits' or 'loans'");
       }
-      return get(
-        `/institutions/${seg(args.id)}/products`,
-        pick(args, ["category"])
-      );
+      const params =
+        args.section === "products" && args.category
+          ? { category: args.category }
+          : undefined;
+      return get(`/institutions/${seg(args.id)}${suffix}`, params);
     },
-
-    aia_get_top_products: (args) =>
-      get(`/institutions/${seg(args.id)}/top-products`),
-
-    aia_get_personas: (args) => get(`/institutions/${seg(args.id)}/personas`),
-
-    aia_get_ai_strategy: (args) =>
-      get(`/institutions/${seg(args.id)}/ai-strategy`),
-
-    aia_get_key_highlights: (args) =>
-      get(`/institutions/${seg(args.id)}/highlights`),
-
-    aia_get_weekly_market: (args) =>
-      get(`/institutions/${seg(args.id)}/weekly-market`),
-
-    aia_get_cta_urls: (args) => get(`/institutions/${seg(args.id)}/cta-urls`),
 
     aia_compare_institutions: (args) => {
       if (!args.with)
@@ -147,7 +152,8 @@ export function createHandlers(
           args.limit !== undefined ? clamp(args.limit, 1, 5000) : undefined,
       }),
 
-    // ── Ops / admin ─────────────────────────────────────────────────────────
+    // ── Ops / admin (listed only when AIA_ENABLE_OPS is set; handlers always
+    //    registered so a gated tool can never resolve to "unknown tool") ──────
     aia_get_institution_freshness: (args) =>
       get(`/institutions/${seg(args.id)}/freshness`),
 
@@ -165,7 +171,6 @@ export function createHandlers(
     aia_get_cost_usage: (args) =>
       get("/admin/cost-usage", pick(args, ["from", "to"])),
 
-    // ── Diagnostics ─────────────────────────────────────────────────────────
     aia_whoami: () => get("/me"),
   };
 }

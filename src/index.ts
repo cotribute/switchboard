@@ -52,6 +52,9 @@ const githubToken = process.env.GITHUB_TOKEN;
 // Optional AIA (AI Institution Advisor) — internal-only, one unscoped key
 const aiaApiKey = process.env.AIA_API_KEY;
 const aiaBaseUrl = process.env.AIA_BASE_URL;
+// Ops/admin tools (freshness, changes, jobs, audit, cost, whoami) are gated off
+// by default to keep the model's tool surface lean; set AIA_ENABLE_OPS=true to expose them.
+const aiaEnableOps = process.env.AIA_ENABLE_OPS === "true";
 
 // Module-level singleton DB pools — shared across MCP sessions, lifetime of the dyno
 const prodDbPool = claudeDbUrl
@@ -133,6 +136,7 @@ function createMcpHandler(scope: ModuleScope) {
         githubToken,
         aiaApiKey,
         aiaBaseUrl,
+        aiaEnableOps,
       });
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,

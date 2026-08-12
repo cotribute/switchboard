@@ -28,7 +28,7 @@ import { tools as papertrailTools } from "./papertrail/tools.js";
 import { createHandlers as createPapertrailHandlers } from "./papertrail/handlers.js";
 import { tools as githubTools } from "./github/tools.js";
 import { createHandlers as createGithubHandlers } from "./github/handlers.js";
-import { tools as aiaTools } from "./aia/tools.js";
+import { tools as aiaTools, opsTools as aiaOpsTools } from "./aia/tools.js";
 import { createHandlers as createAiaHandlers } from "./aia/handlers.js";
 import { GoogleAuth } from "google-auth-library";
 
@@ -64,6 +64,7 @@ export interface CotributeMCPServerOptions {
   githubToken?: string;
   aiaApiKey?: string;
   aiaBaseUrl?: string;
+  aiaEnableOps?: boolean;
 }
 
 export class CotributeMCPServer {
@@ -82,6 +83,7 @@ export class CotributeMCPServer {
   private papertrailAxios: AxiosInstance | null;
   private githubAxios: AxiosInstance | null;
   private aiaAxios: AxiosInstance | null;
+  private aiaEnableOps: boolean;
   private handlers: Record<string, (args: any) => Promise<any>>;
 
   constructor(options: CotributeMCPServerOptions) {
@@ -104,6 +106,7 @@ export class CotributeMCPServer {
       githubToken,
       aiaApiKey,
       aiaBaseUrl,
+      aiaEnableOps,
     } = options;
     this.server = new Server(
       { name: "switchboard", version: "2.0.0" },
@@ -125,6 +128,7 @@ export class CotributeMCPServer {
     this.papertrailAxios = null;
     this.githubAxios = null;
     this.aiaAxios = null;
+    this.aiaEnableOps = aiaEnableOps ?? false;
 
     // Front.app module
     if (scope === "frontapp") {
@@ -373,6 +377,7 @@ export class CotributeMCPServer {
       ...(this.papertrailAxios ? papertrailTools : []),
       ...(this.githubAxios ? githubTools : []),
       ...(this.aiaAxios ? aiaTools : []),
+      ...(this.aiaAxios && this.aiaEnableOps ? aiaOpsTools : []),
     ].map((tool: any) => ({
       ...tool,
       annotations: { ...READ_ONLY_ANNOTATIONS, ...(tool.annotations ?? {}) },

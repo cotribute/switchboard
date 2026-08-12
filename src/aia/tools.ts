@@ -6,6 +6,11 @@
 // returned UUID on every follow-up call — slugs are NOT globally unique (151
 // slugs are shared by 447 institutions), so an ambiguous slug resolves to an
 // arbitrary row. Slugs are only safe for the ~41 Dream Bigger client institutions.
+//
+// Tool surface is kept lean to conserve model context: the per-payload research
+// getters are consolidated into aia_get_institution_bundle (everything at once)
+// + aia_get_institution_section (one slice). The ops/admin group (`opsTools`)
+// is exported separately and only exposed when AIA_ENABLE_OPS is set.
 
 const ID_DESC =
   "AIA institution UUID (preferred) or slug. Use the UUID returned by " +
@@ -13,8 +18,9 @@ const ID_DESC =
   "name — slugs are not globally unique. Slugs are only safe for the ~41 Dream " +
   "Bigger client institutions.";
 
+// ── Core tools (always exposed) ─────────────────────────────────────────────
 export const tools = [
-  // ── Discovery ────────────────────────────────────────────────────────────
+  // ── Discovery ──────────────────────────────────────────────────────────
   {
     name: "aia_search_institutions",
     description:
@@ -112,24 +118,14 @@ export const tools = [
     inputSchema: { type: "object", properties: {} },
   },
 
-  // ── Institution research ──────────────────────────────────────────────────
-  {
-    name: "aia_get_institution_profile",
-    description:
-      "Institution firmographics, regulator ids, highlights, and availability flags. " +
-      "Research output, not a live scrape.",
-    inputSchema: {
-      type: "object",
-      properties: { id: { type: "string", description: ID_DESC } },
-      required: ["id"],
-    },
-  },
+  // ── Institution research ───────────────────────────────────────────────
   {
     name: "aia_get_institution_bundle",
     description:
-      "Profile PLUS every research payload in one call. Prefer this over 5+ separate " +
-      "calls whenever the question is broad. Research output, not a live scrape — check " +
-      "each payload's as_of_date for recency.",
+      "Profile PLUS every research payload for one institution in a single call — " +
+      "firmographics, products, top-products, personas, ai-strategy, highlights, " +
+      "weekly-market, cta-urls. Prefer this for any broad question. Research output, " +
+      "not a live scrape — check each payload's as_of_date for recency.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", description: ID_DESC } },
@@ -137,72 +133,38 @@ export const tools = [
     },
   },
   {
-    name: "aia_get_products",
+    name: "aia_get_institution_section",
     description:
-      "Deposit or loan products for an institution. Deposits and Loans are kept " +
-      "strictly separate — never merge the two categories in a summary.",
+      "Fetch ONE research slice for an institution (use aia_get_institution_bundle " +
+      "if you want several). Deposits vs Loans stay strictly separate in any summary. " +
+      "Sections: profile (firmographics, regulator ids), products (deposit/loan " +
+      "products; accepts category), top_products (ranked w/ factor scores), personas, " +
+      "ai_strategy, highlights, weekly_market (market & competitor research), cta_urls.",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: ID_DESC },
-        category: { type: "string", enum: ["deposits", "loans"] },
+        section: {
+          type: "string",
+          enum: [
+            "profile",
+            "products",
+            "top_products",
+            "personas",
+            "ai_strategy",
+            "highlights",
+            "weekly_market",
+            "cta_urls",
+          ],
+          description: "Which research slice to return.",
+        },
+        category: {
+          type: "string",
+          enum: ["deposits", "loans"],
+          description: "Only used when section=products.",
+        },
       },
-      required: ["id"],
-    },
-  },
-  {
-    name: "aia_get_top_products",
-    description:
-      "Ranked top products with factor scores. Deposits vs Loans stay separate.",
-    inputSchema: {
-      type: "object",
-      properties: { id: { type: "string", description: ID_DESC } },
-      required: ["id"],
-    },
-  },
-  {
-    name: "aia_get_personas",
-    description: "Member/customer personas researched for an institution.",
-    inputSchema: {
-      type: "object",
-      properties: { id: { type: "string", description: ID_DESC } },
-      required: ["id"],
-    },
-  },
-  {
-    name: "aia_get_ai_strategy",
-    description: "AI-strategy research payload for an institution.",
-    inputSchema: {
-      type: "object",
-      properties: { id: { type: "string", description: ID_DESC } },
-      required: ["id"],
-    },
-  },
-  {
-    name: "aia_get_key_highlights",
-    description: "Key highlights for an institution.",
-    inputSchema: {
-      type: "object",
-      properties: { id: { type: "string", description: ID_DESC } },
-      required: ["id"],
-    },
-  },
-  {
-    name: "aia_get_weekly_market",
-    description: "Weekly market & competitor research for an institution.",
-    inputSchema: {
-      type: "object",
-      properties: { id: { type: "string", description: ID_DESC } },
-      required: ["id"],
-    },
-  },
-  {
-    name: "aia_get_cta_urls",
-    description: "Call-to-action / apply URLs researched for an institution.",
-    inputSchema: {
-      type: "object",
-      properties: { id: { type: "string", description: ID_DESC } },
-      required: ["id"],
+      required: ["id", "section"],
     },
   },
   {
@@ -214,13 +176,13 @@ export const tools = [
       type: "object",
       properties: {
         id: { type: "string", description: `Institution A. ${ID_DESC}` },
-        with: { type: "string", description: `Institution B (UUID or slug).` },
+        with: { type: "string", description: "Institution B (UUID or slug)." },
       },
       required: ["id", "with"],
     },
   },
 
-  // ── Cross-org analysis ────────────────────────────────────────────────────
+  // ── Cross-org analysis ─────────────────────────────────────────────────
   {
     name: "aia_search_products",
     description:
@@ -303,8 +265,10 @@ export const tools = [
       },
     },
   },
+];
 
-  // ── Ops / admin (internal only) ───────────────────────────────────────────
+// ── Ops / admin tools (exposed only when AIA_ENABLE_OPS is set) ──────────────
+export const opsTools = [
   {
     name: "aia_get_institution_freshness",
     description: "Data age + site-monitor state for one institution.",
@@ -381,8 +345,6 @@ export const tools = [
       },
     },
   },
-
-  // ── Diagnostics ───────────────────────────────────────────────────────────
   {
     name: "aia_whoami",
     description:
