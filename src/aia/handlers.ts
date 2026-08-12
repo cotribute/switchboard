@@ -164,5 +164,8 @@ export function createHandlers(
 
     aia_get_cost_usage: (args) =>
       get("/admin/cost-usage", pick(args, ["from", "to"])),
+
+    // ── Diagnostics ─────────────────────────────────────────────────────────
+    aia_whoami: () => get("/me"),
   };
 }

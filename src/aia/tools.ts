@@ -381,4 +381,13 @@ export const tools = [
       },
     },
   },
+
+  // ── Diagnostics ───────────────────────────────────────────────────────────
+  {
+    name: "aia_whoami",
+    description:
+      "Echo the calling key's scopes, tenancy, and remaining rate limit. Use to " +
+      "diagnose access (e.g. a 403 or an unexpectedly narrowed result set).",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
