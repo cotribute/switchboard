@@ -28,6 +28,8 @@ import { tools as papertrailTools } from "./papertrail/tools.js";
 import { createHandlers as createPapertrailHandlers } from "./papertrail/handlers.js";
 import { tools as githubTools } from "./github/tools.js";
 import { createHandlers as createGithubHandlers } from "./github/handlers.js";
+import { tools as aiaTools } from "./aia/tools.js";
+import { createHandlers as createAiaHandlers } from "./aia/handlers.js";
 import { GoogleAuth } from "google-auth-library";
 
 export type ModuleScope =
@@ -40,7 +42,8 @@ export type ModuleScope =
   | "heroku-postgres"
   | "coadmin-api"
   | "papertrail"
-  | "github";
+  | "github"
+  | "aia";
 
 export interface CotributeMCPServerOptions {
   scope: ModuleScope;
@@ -59,6 +62,8 @@ export interface CotributeMCPServerOptions {
   coadminApiCreds?: { apiKey: string; apiSecret: string; clientId: string };
   papertrailToken?: string;
   githubToken?: string;
+  aiaApiKey?: string;
+  aiaBaseUrl?: string;
 }
 
 export class CotributeMCPServer {
@@ -76,6 +81,7 @@ export class CotributeMCPServer {
   private coadminAxios: AxiosInstance | null;
   private papertrailAxios: AxiosInstance | null;
   private githubAxios: AxiosInstance | null;
+  private aiaAxios: AxiosInstance | null;
   private handlers: Record<string, (args: any) => Promise<any>>;
 
   constructor(options: CotributeMCPServerOptions) {
@@ -96,6 +102,8 @@ export class CotributeMCPServer {
       coadminApiCreds,
       papertrailToken,
       githubToken,
+      aiaApiKey,
+      aiaBaseUrl,
     } = options;
     this.server = new Server(
       { name: "switchboard", version: "2.0.0" },
@@ -116,6 +124,7 @@ export class CotributeMCPServer {
     this.coadminAxios = null;
     this.papertrailAxios = null;
     this.githubAxios = null;
+    this.aiaAxios = null;
 
     // Front.app module
     if (scope === "frontapp") {
@@ -309,6 +318,22 @@ export class CotributeMCPServer {
       Object.assign(this.handlers, createGithubHandlers(this.githubAxios));
     }
 
+    // AIA (AI Institution Advisor) module — internal-only, read-only wrapper
+    // over the AIA Public API. One unscoped key reads every institution.
+    if (scope === "aia" && aiaApiKey) {
+      this.aiaAxios = axios.create({
+        baseURL:
+          aiaBaseUrl ||
+          "https://wyjwvznwrxrboxgluktu.supabase.co/functions/v1/api/v1",
+        timeout: 20000,
+        headers: {
+          "x-api-key": aiaApiKey,
+          Accept: "application/json",
+        },
+      });
+      Object.assign(this.handlers, createAiaHandlers(this.aiaAxios));
+    }
+
     this.setupHandlers();
     this.setupErrorHandling();
   }
@@ -347,6 +372,7 @@ export class CotributeMCPServer {
       ...(this.coadminAxios ? coadminApiTools : []),
       ...(this.papertrailAxios ? papertrailTools : []),
       ...(this.githubAxios ? githubTools : []),
+      ...(this.aiaAxios ? aiaTools : []),
     ].map((tool: any) => ({
       ...tool,
       annotations: { ...READ_ONLY_ANNOTATIONS, ...(tool.annotations ?? {}) },

@@ -49,6 +49,10 @@ const acquireApiClientId = process.env.ACQUIRE_API_CLIENT_ID;
 const papertrailToken = process.env.PAPERTRAIL_API_TOKEN;
 const githubToken = process.env.GITHUB_TOKEN;
 
+// Optional AIA (AI Institution Advisor) — internal-only, one unscoped key
+const aiaApiKey = process.env.AIA_API_KEY;
+const aiaBaseUrl = process.env.AIA_BASE_URL;
+
 // Module-level singleton DB pools — shared across MCP sessions, lifetime of the dyno
 const prodDbPool = claudeDbUrl
   ? new Pool({
@@ -127,6 +131,8 @@ function createMcpHandler(scope: ModuleScope) {
         coadminApiCreds,
         papertrailToken,
         githubToken,
+        aiaApiKey,
+        aiaBaseUrl,
       });
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
@@ -174,6 +180,8 @@ const moduleEndpoints: ModuleScope[] = [
   "coadmin-api",
   "papertrail",
   "github",
+  // Internal research (unscoped, cross-org)
+  "aia",
 ];
 
 for (const scope of moduleEndpoints) {
@@ -194,6 +202,7 @@ app.listen(port, () => {
   if (coadminApiBaseUrl && coadminApiCreds) services.push("coadmin-api");
   if (papertrailToken) services.push("Papertrail");
   if (githubToken) services.push("GitHub");
+  if (aiaApiKey) services.push("AIA");
   console.log(
     `Switchboard MCP server listening on port ${port} (${services.join(" + ")})`
   );
