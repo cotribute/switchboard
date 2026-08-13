@@ -3,9 +3,10 @@
 // research output, NOT a live scrape — `as_of_date` on a payload indicates its
 // recency. When the user names an institution in prose, resolve it first with
 // aia_suggest_institutions (or aia_lookup_institution) and then carry the
-// returned UUID on every follow-up call — slugs are NOT globally unique (151
-// slugs are shared by 447 institutions), so an ambiguous slug resolves to an
-// arbitrary row. Slugs are only safe for the ~41 Dream Bigger client institutions.
+// returned UUID on every follow-up call — slugs are NOT globally unique (many
+// legal names repeat across different states), so an ambiguous slug resolves to
+// an arbitrary row. Slugs are only safe for the small set of Dream Bigger client
+// institutions.
 //
 // Tool surface is kept lean to conserve model context: the per-payload research
 // getters are consolidated into aia_get_institution_bundle (everything at once)
