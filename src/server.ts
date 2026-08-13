@@ -343,8 +343,20 @@ export class CotributeMCPServer {
   }
 
   private setupErrorHandling(): void {
-    this.server.onerror = (error) => {
-      console.error("[MCP Error]", error);
+    this.server.onerror = (error: any) => {
+      // Never log the full error object: axios errors carry `config.headers`,
+      // which hold secrets like `x-api-key`. Log only a sanitized message plus
+      // status/url so credentials can't leak into logs.
+      const status = error?.response?.status;
+      const url = error?.config?.url;
+      const detail = [status && `HTTP ${status}`, url]
+        .filter(Boolean)
+        .join(" ");
+      console.error(
+        "[MCP Error]",
+        error?.message || String(error),
+        detail || ""
+      );
     };
 
     process.on("SIGINT", async () => {

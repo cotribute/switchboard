@@ -54,7 +54,7 @@ export function createHandlers(
   const get = (path: string, params?: Record<string, any>) =>
     aiaGet(axiosInstance, path, params);
 
-  return {
+  const handlers: Record<string, (args: any) => Promise<any>> = {
     // ── Discovery ───────────────────────────────────────────────────────────
     aia_search_institutions: (args) =>
       get("/institutions", {
@@ -174,4 +174,14 @@ export function createHandlers(
 
     aia_whoami: () => get("/me"),
   };
+
+  // MCP call_tool may omit `arguments`, so `args` can arrive undefined. Default
+  // it to {} for every handler so none throws a TypeError before its own
+  // validation runs.
+  return Object.fromEntries(
+    Object.entries(handlers).map(([name, fn]) => [
+      name,
+      (args: any) => fn(args ?? {}),
+    ])
+  );
 }
