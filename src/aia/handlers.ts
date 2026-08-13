@@ -154,7 +154,10 @@ export function createHandlers(
 
     aia_export_institutions: (args) =>
       get("/institutions/export", {
-        format: args.format || "json",
+        // Always JSON — the MCP response JSON-stringifies the payload. Ignore any
+        // caller-supplied format (tool schemas aren't enforced at runtime, so a
+        // stray format= could otherwise return non-JSON/oversized data).
+        format: "json",
         ...pick(args, SEARCH_KEYS),
         limit:
           args.limit !== undefined ? clamp(args.limit, 1, 5000) : undefined,

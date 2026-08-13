@@ -242,16 +242,11 @@ export const tools = [
   {
     name: "aia_export_institutions",
     description:
-      "Bulk export of institutions (format=json for tool use) with the same filters as " +
+      "Bulk export of institutions (JSON) with the same filters as " +
       "aia_search_institutions. Use for large cross-org pulls; limit up to 5000.",
     inputSchema: {
       type: "object",
       properties: {
-        format: {
-          type: "string",
-          enum: ["json"],
-          description: "Use 'json' for tool use.",
-        },
         q: { type: "string" },
         type: { type: "string", enum: ["cu", "bank"] },
         state: { type: "string" },
