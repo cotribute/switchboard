@@ -342,12 +342,14 @@ export const opsTools = [
   },
   {
     name: "aia_get_cost_usage",
-    description: "Research cost/usage over a date range.",
+    description:
+      "Research cost/usage over a date range. Always pass `from` and `to` — an " +
+      "unbounded query scans all history and can time out.",
     inputSchema: {
       type: "object",
       properties: {
-        from: { type: "string", description: "ISO-8601 start." },
-        to: { type: "string", description: "ISO-8601 end." },
+        from: { type: "string", description: "ISO-8601 start (recommended)." },
+        to: { type: "string", description: "ISO-8601 end (recommended)." },
       },
     },
   },
