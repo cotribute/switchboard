@@ -1,8 +1,15 @@
 import { AxiosInstance } from "axios";
 import { aiaGet } from "./client.js";
 
-// Institution identifiers accept a UUID or a slug; both go in the path segment.
-const seg = (v: string) => encodeURIComponent(String(v));
+// Institution / job identifiers accept a UUID or a slug; both go in the path
+// segment. Reject a missing id up front so an omitted required arg yields a clear
+// error instead of a confusing "/institutions/undefined/..." 404 downstream.
+const seg = (v: string) => {
+  if (v === undefined || v === null || String(v).trim() === "") {
+    throw new Error("A required id (UUID or slug) is missing.");
+  }
+  return encodeURIComponent(String(v));
+};
 const clamp = (n: number, lo: number, hi: number) =>
   Math.max(lo, Math.min(hi, Math.trunc(n)));
 
