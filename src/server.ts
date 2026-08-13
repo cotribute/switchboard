@@ -336,6 +336,20 @@ export class CotributeMCPServer {
         },
       });
       Object.assign(this.handlers, createAiaHandlers(this.aiaAxios));
+      // AIA_ENABLE_OPS gates the ops/admin tools from BOTH tools/list and direct
+      // invocation. Since CallToolRequestSchema dispatches from this.handlers by
+      // name (not from the exposed list), replace the ops handlers with a stub
+      // that refuses when the flag is off — otherwise a caller who knows the name
+      // could still run an admin-scoped tool that isn't listed.
+      if (!aiaEnableOps) {
+        for (const tool of aiaOpsTools) {
+          this.handlers[tool.name] = async () => {
+            throw new Error(
+              `${tool.name} is disabled. Set AIA_ENABLE_OPS=true to enable AIA ops/admin tools.`
+            );
+          };
+        }
+      }
     }
 
     this.setupHandlers();

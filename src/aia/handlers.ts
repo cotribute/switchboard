@@ -153,8 +153,8 @@ export function createHandlers(
           args.limit !== undefined ? clamp(args.limit, 1, 5000) : undefined,
       }),
 
-    // ── Ops / admin (listed only when AIA_ENABLE_OPS is set; handlers always
-    //    registered so a gated tool can never resolve to "unknown tool") ──────
+    // ── Ops / admin (gated by AIA_ENABLE_OPS: when off, server.ts replaces
+    //    these with a stub that refuses invocation — not just hidden) ──────────
     aia_get_institution_freshness: (args) =>
       get(`/institutions/${seg(args.id)}/freshness`),
 
