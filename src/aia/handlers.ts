@@ -63,12 +63,24 @@ export function createHandlers(
 
   const handlers: Record<string, (args: any) => Promise<any>> = {
     // ── Discovery ───────────────────────────────────────────────────────────
-    aia_search_institutions: (args) =>
-      get("/institutions", {
+    aia_search_institutions: (args) => {
+      // bulk:true routes to the export endpoint (single page up to 5000, JSON,
+      // no cursor); otherwise the paginated list endpoint (limit ≤100 + cursor).
+      // SEARCH_KEYS passthrough keeps the un-advertised niche filters working.
+      if (args.bulk) {
+        return get("/institutions/export", {
+          format: "json",
+          ...pick(args, SEARCH_KEYS),
+          limit:
+            args.limit !== undefined ? clamp(args.limit, 1, 5000) : undefined,
+        });
+      }
+      return get("/institutions", {
         ...pick(args, SEARCH_KEYS),
         limit: args.limit !== undefined ? clamp(args.limit, 1, 100) : undefined,
         cursor: args.cursor,
-      }),
+      });
+    },
 
     aia_lookup_institution: (args) => {
       if (!args.ncua && !args.fdic && !args.name) {
@@ -151,17 +163,6 @@ export function createHandlers(
 
     aia_get_coverage_stats: (args) =>
       get("/stats/coverage", pick(args, ["stale_days"])),
-
-    aia_export_institutions: (args) =>
-      get("/institutions/export", {
-        // Always JSON — the MCP response JSON-stringifies the payload. Ignore any
-        // caller-supplied format (tool schemas aren't enforced at runtime, so a
-        // stray format= could otherwise return non-JSON/oversized data).
-        format: "json",
-        ...pick(args, SEARCH_KEYS),
-        limit:
-          args.limit !== undefined ? clamp(args.limit, 1, 5000) : undefined,
-      }),
 
     // ── Ops / admin (gated by AIA_ENABLE_OPS: when off, server.ts replaces
     //    these with a stub that refuses invocation — not just hidden) ──────────
