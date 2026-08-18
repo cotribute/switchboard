@@ -13,10 +13,11 @@
 //     row; slugs are only safe for the small set of Dream Bigger client orgs.
 //   - Regulator facts (assets, membership, charter) are authoritative over
 //     anything in narrative text. Keep Deposits and Loans strictly separate.
-//   - aia_search_institutions also accepts (but does not advertise) the niche
-//     filters ncua, fdic, ids, slugs, has_website/has_products/has_top_products/
-//     has_personas/has_ai_strategy, excluded_from_research, updated_since(_field),
-//     stale_before(_field) — pass them through if a caller needs them.
+//   - aia_search_institutions accepts extra niche filters (ncua, fdic, ids, slugs,
+//     has_*, excluded_from_research, updated_since(_field), stale_before(_field))
+//     that are NOT in its schema — best-effort only: schema-validating MCP clients
+//     strip unknown keys, so these reach the API on non-validating clients alone.
+//     For ncua/fdic use aia_lookup_institution (reliable everywhere).
 //   - The per-payload research getters are consolidated into
 //     aia_get_institution_bundle (everything) + aia_get_institution_section (one
 //     slice). The ops/admin group (`opsTools`) loads only when AIA_ENABLE_OPS is set.
@@ -106,8 +107,9 @@ export const tools = [
   {
     name: "aia_get_institution_bundle",
     description:
-      "Profile + every research payload for one institution in one call. Prefer " +
-      "this for any broad question (vs several aia_get_institution_section calls).",
+      "Profile + every research payload for one institution in one (large) call. " +
+      "Use only for genuinely broad asks; for a single slice prefer " +
+      "aia_get_institution_section.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", description: ID_DESC } },

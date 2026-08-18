@@ -10,10 +10,19 @@ const seg = (v: string) => {
   }
   return encodeURIComponent(String(v));
 };
-const clamp = (n: number, lo: number, hi: number) =>
-  Math.max(lo, Math.min(hi, Math.trunc(n)));
+// Coerce a caller-supplied limit into [lo, hi], or undefined (→ API default) when
+// it isn't a finite number — a model can pass e.g. "twenty", and NaN on the wire
+// would just 400.
+const toLimit = (v: unknown, lo: number, hi: number): number | undefined => {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.max(lo, Math.min(hi, Math.trunc(n)));
+};
 
-// Params passed through verbatim by aia_search_institutions / aia_export_institutions.
+// Best-effort passthrough filters for aia_search_institutions. NOTE: these are
+// NOT declared in the tool's inputSchema, so schema-validating MCP clients strip
+// them before the call and they silently no-op there; they only reach the API on
+// non-validating clients. For ncua/fdic, aia_lookup_institution is the reliable path.
 const SEARCH_KEYS = [
   "q",
   "type",
@@ -64,20 +73,28 @@ export function createHandlers(
   const handlers: Record<string, (args: any) => Promise<any>> = {
     // ── Discovery ───────────────────────────────────────────────────────────
     aia_search_institutions: (args) => {
-      // bulk:true routes to the export endpoint (single page up to 5000, JSON,
-      // no cursor); otherwise the paginated list endpoint (limit ≤100 + cursor).
-      // SEARCH_KEYS passthrough keeps the un-advertised niche filters working.
+      // Require at least one filter so the model can't default to an unfiltered
+      // full-table scan (the schema has no required field by design — several
+      // filters are valid entry points, not just q).
+      if (!args.q && !args.type && !args.state && !args.org_segment) {
+        throw new Error(
+          "aia_search_institutions requires at least one of: q, type, state, org_segment"
+        );
+      }
+      // bulk:true routes to the export endpoint (single page, JSON, no cursor);
+      // otherwise the paginated list endpoint (limit ≤100 + cursor). The response
+      // cap in aiaGet bounds either result. SEARCH_KEYS passthrough is best-effort
+      // (see its note). bulk is capped to the same ceiling as a normal page.
       if (args.bulk) {
         return get("/institutions/export", {
           format: "json",
           ...pick(args, SEARCH_KEYS),
-          limit:
-            args.limit !== undefined ? clamp(args.limit, 1, 5000) : undefined,
+          limit: toLimit(args.limit, 1, 200),
         });
       }
       return get("/institutions", {
         ...pick(args, SEARCH_KEYS),
-        limit: args.limit !== undefined ? clamp(args.limit, 1, 100) : undefined,
+        limit: toLimit(args.limit, 1, 100),
         cursor: args.cursor,
       });
     },
@@ -102,7 +119,7 @@ export function createHandlers(
       }
       return get("/search/suggest", {
         q: args.q,
-        limit: args.limit !== undefined ? clamp(args.limit, 1, 25) : undefined,
+        limit: toLimit(args.limit, 1, 25),
       });
     },
 
@@ -113,12 +130,15 @@ export function createHandlers(
       get(`/institutions/${seg(args.id)}/bundle`),
 
     aia_get_institution_section: (args) => {
-      const suffix = SECTION_PATHS[args.section];
-      if (suffix === undefined) {
+      // hasOwnProperty guard: a plain-object lookup would resolve inherited keys
+      // like "constructor"/"toString" to functions, which then get interpolated
+      // into the URL. Only accept declared sections.
+      if (!Object.prototype.hasOwnProperty.call(SECTION_PATHS, args.section)) {
         throw new Error(
           `Unknown section '${args.section}'. Valid: ${Object.keys(SECTION_PATHS).join(", ")}`
         );
       }
+      const suffix = SECTION_PATHS[args.section];
       if (
         args.section === "products" &&
         args.category &&
@@ -148,7 +168,7 @@ export function createHandlers(
       }
       return get("/products/search", {
         q: args.q,
-        limit: args.limit !== undefined ? clamp(args.limit, 1, 200) : undefined,
+        limit: toLimit(args.limit, 1, 200),
         cursor: args.cursor,
       });
     },
@@ -157,7 +177,7 @@ export function createHandlers(
       get("/rates", {
         kind: args.kind,
         category: args.category,
-        limit: args.limit !== undefined ? clamp(args.limit, 1, 500) : undefined,
+        limit: toLimit(args.limit, 1, 500),
         cursor: args.cursor,
       }),
 
