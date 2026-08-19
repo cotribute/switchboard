@@ -46,8 +46,33 @@ const jsonLen = (v: any): number => {
   }
 };
 
+const CAP_NOTE =
+  "Response capped to protect context. Narrow filters or page with cursor for more.";
+const ELIDE_NOTE =
+  "Payload capped to protect context; largest sections elided — fetch them individually via aia_get_institution_section.";
+
+// Elide the largest top-level values of an object until it fits under MAX_BYTES,
+// keeping the small fields (e.g. a bundle's profile) intact. Returns the capped
+// object plus the names of the elided keys.
+function elideObject(obj: Record<string, any>): {
+  value: Record<string, any>;
+  elided: string[];
+} {
+  const value: Record<string, any> = { ...obj };
+  const elided: string[] = [];
+  const ranked = Object.keys(value)
+    .map((k) => ({ k, size: jsonLen(value[k]) }))
+    .sort((a, b) => b.size - a.size);
+  for (const { k, size } of ranked) {
+    if (jsonLen(value) <= MAX_BYTES) break;
+    value[k] = { elided: true, approx_bytes: size };
+    elided.push(k);
+  }
+  return { value, elided };
+}
+
 // Cap any payload so one call can't blow the context window:
-//  - array: slice to the row/byte ceiling (list endpoints).
+//  - array: slice to the row/byte ceiling; a lone oversized row is elided in place.
 //  - object: byte-cap by eliding the largest top-level sub-payloads (the bundle
 //    endpoint returns an object, so it would otherwise bypass the cap entirely).
 // Truncation is always flagged so the model pages/fetches deliberately.
@@ -66,48 +91,35 @@ function capPayload(data: any, meta?: any): any {
       rows = rows.slice(0, Math.ceil(rows.length / 2));
       truncated = true;
     }
-    return wrap(
-      rows,
-      truncated
-        ? {
-            returned: rows.length,
-            truncated: true,
-            truncation_note:
-              "Response capped to protect context. Narrow filters or page with cursor for more.",
-          }
-        : { returned: rows.length }
-    );
+    // A single row can still exceed the byte ceiling; elide within it so the
+    // model gets a bounded, flagged response rather than silently huge output.
+    let elided: string[] | undefined;
+    if (
+      rows.length === 1 &&
+      rows[0] &&
+      typeof rows[0] === "object" &&
+      jsonLen(rows) > MAX_BYTES
+    ) {
+      const capped = elideObject(rows[0]);
+      rows = [capped.value];
+      elided = capped.elided;
+      truncated = true;
+    }
+    if (!truncated) return wrap(rows, { returned: rows.length });
+    return wrap(rows, {
+      returned: rows.length,
+      truncated: true,
+      truncation_note: elided ? ELIDE_NOTE : CAP_NOTE,
+      ...(elided ? { elided } : {}),
+    });
   }
 
   if (data && typeof data === "object" && jsonLen(data) > MAX_BYTES) {
-    // Elide the largest top-level values (e.g. a bundle's heaviest research
-    // payloads) until under the byte ceiling; keep profile/small fields intact.
-    const capped: Record<string, any> = { ...data };
-    const elided: string[] = [];
-    const ranked = Object.keys(capped)
-      .map((k) => ({ k, size: jsonLen(capped[k]) }))
-      .sort((a, b) => b.size - a.size);
-    for (const { k, size } of ranked) {
-      if (jsonLen(capped) <= MAX_BYTES) break;
-      capped[k] = { elided: true, approx_bytes: size };
-      elided.push(k);
-    }
+    const { value, elided } = elideObject(data);
+    const extra = { truncated: true, elided, truncation_note: ELIDE_NOTE };
     return meta !== undefined
-      ? {
-          data: capped,
-          meta,
-          truncated: true,
-          elided,
-          truncation_note:
-            "Payload capped to protect context; largest sections elided — fetch them individually via aia_get_institution_section.",
-        }
-      : {
-          ...capped,
-          truncated: true,
-          elided,
-          truncation_note:
-            "Payload capped to protect context; largest sections elided — fetch them individually via aia_get_institution_section.",
-        };
+      ? { data: value, meta, ...extra }
+      : { ...value, ...extra };
   }
 
   return meta !== undefined ? { data, meta } : data;
