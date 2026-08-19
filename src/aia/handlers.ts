@@ -81,17 +81,8 @@ export function createHandlers(
           "aia_search_institutions requires at least one of: q, type, state, org_segment"
         );
       }
-      // bulk:true routes to the export endpoint (single page, JSON, no cursor);
-      // otherwise the paginated list endpoint (limit ≤100 + cursor). The response
-      // cap in aiaGet bounds either result. SEARCH_KEYS passthrough is best-effort
-      // (see its note). bulk is capped to the same ceiling as a normal page.
-      if (args.bulk) {
-        return get("/institutions/export", {
-          format: "json",
-          ...pick(args, SEARCH_KEYS),
-          limit: toLimit(args.limit, 1, 200),
-        });
-      }
+      // Paginated list endpoint (limit ≤100 + cursor); the response cap in aiaGet
+      // bounds the result. SEARCH_KEYS passthrough is best-effort (see its note).
       return get("/institutions", {
         ...pick(args, SEARCH_KEYS),
         limit: toLimit(args.limit, 1, 100),

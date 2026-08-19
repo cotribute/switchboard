@@ -32,7 +32,7 @@ export const tools = [
     description:
       "Search/filter all AIA institutions (CUs + banks). Primary tool for " +
       "market-wide questions (e.g. 'top 20 Texas CUs by assets') — filter rather " +
-      "than looking up one at a time. Set bulk:true for large single-page pulls.",
+      "than looking up one at a time. Page large result sets with cursor.",
     inputSchema: {
       type: "object",
       properties: {
@@ -55,13 +55,8 @@ export const tools = [
           ],
         },
         order: { type: "string", enum: ["asc", "desc"] },
-        limit: { type: "number", description: "1–100 (5000 with bulk)." },
+        limit: { type: "number", description: "1–100 per page." },
         cursor: { type: "string", description: "Pagination offset." },
-        bulk: {
-          type: "boolean",
-          description:
-            "Single-page export up to 5000 (no cursor) for large pulls.",
-        },
       },
     },
   },

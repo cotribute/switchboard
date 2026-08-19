@@ -38,9 +38,14 @@ function retryDelayMs(error: any, attempt: number): number {
   return RETRY_DELAYS_MS[attempt];
 }
 
+// Measure with 2-space indent to match how server.ts serializes tool results
+// (JSON.stringify(result, null, 2)) — that pretty-printed string is what actually
+// reaches the model, and it's ~2–3× larger than compact for number/array-heavy
+// payloads. Measuring compact here would under-count and let the real output blow
+// past MAX_BYTES.
 const jsonLen = (v: any): number => {
   try {
-    return JSON.stringify(v)?.length ?? 0;
+    return JSON.stringify(v, null, 2)?.length ?? 0;
   } catch {
     return 0;
   }
