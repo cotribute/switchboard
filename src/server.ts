@@ -28,6 +28,8 @@ import { tools as papertrailTools } from "./papertrail/tools.js";
 import { createHandlers as createPapertrailHandlers } from "./papertrail/handlers.js";
 import { tools as githubTools } from "./github/tools.js";
 import { createHandlers as createGithubHandlers } from "./github/handlers.js";
+import { tools as aiaTools, opsTools as aiaOpsTools } from "./aia/tools.js";
+import { createHandlers as createAiaHandlers } from "./aia/handlers.js";
 import { GoogleAuth } from "google-auth-library";
 
 export type ModuleScope =
@@ -40,7 +42,8 @@ export type ModuleScope =
   | "heroku-postgres"
   | "coadmin-api"
   | "papertrail"
-  | "github";
+  | "github"
+  | "aia";
 
 export interface CotributeMCPServerOptions {
   scope: ModuleScope;
@@ -59,6 +62,9 @@ export interface CotributeMCPServerOptions {
   coadminApiCreds?: { apiKey: string; apiSecret: string; clientId: string };
   papertrailToken?: string;
   githubToken?: string;
+  aiaApiKey?: string;
+  aiaBaseUrl?: string;
+  aiaEnableOps?: boolean;
 }
 
 export class CotributeMCPServer {
@@ -76,6 +82,8 @@ export class CotributeMCPServer {
   private coadminAxios: AxiosInstance | null;
   private papertrailAxios: AxiosInstance | null;
   private githubAxios: AxiosInstance | null;
+  private aiaAxios: AxiosInstance | null;
+  private aiaEnableOps: boolean;
   private handlers: Record<string, (args: any) => Promise<any>>;
 
   constructor(options: CotributeMCPServerOptions) {
@@ -96,6 +104,9 @@ export class CotributeMCPServer {
       coadminApiCreds,
       papertrailToken,
       githubToken,
+      aiaApiKey,
+      aiaBaseUrl,
+      aiaEnableOps,
     } = options;
     this.server = new Server(
       { name: "switchboard", version: "2.0.0" },
@@ -116,6 +127,8 @@ export class CotributeMCPServer {
     this.coadminAxios = null;
     this.papertrailAxios = null;
     this.githubAxios = null;
+    this.aiaAxios = null;
+    this.aiaEnableOps = aiaEnableOps ?? false;
 
     // Front.app module
     if (scope === "frontapp") {
@@ -309,13 +322,55 @@ export class CotributeMCPServer {
       Object.assign(this.handlers, createGithubHandlers(this.githubAxios));
     }
 
+    // AIA (AI Institution Advisor) module — internal-only, read-only wrapper
+    // over the AIA Public API. One unscoped key reads every institution.
+    if (scope === "aia" && aiaApiKey) {
+      this.aiaAxios = axios.create({
+        baseURL:
+          aiaBaseUrl ||
+          "https://wyjwvznwrxrboxgluktu.supabase.co/functions/v1/api/v1",
+        timeout: 20000,
+        headers: {
+          "x-api-key": aiaApiKey,
+          Accept: "application/json",
+        },
+      });
+      Object.assign(this.handlers, createAiaHandlers(this.aiaAxios));
+      // AIA_ENABLE_OPS gates the ops/admin tools from BOTH tools/list and direct
+      // invocation. Since CallToolRequestSchema dispatches from this.handlers by
+      // name (not from the exposed list), replace the ops handlers with a stub
+      // that refuses when the flag is off — otherwise a caller who knows the name
+      // could still run an admin-scoped tool that isn't listed.
+      if (!aiaEnableOps) {
+        for (const tool of aiaOpsTools) {
+          this.handlers[tool.name] = async () => {
+            throw new Error(
+              `${tool.name} is disabled. Set AIA_ENABLE_OPS=true to enable AIA ops/admin tools.`
+            );
+          };
+        }
+      }
+    }
+
     this.setupHandlers();
     this.setupErrorHandling();
   }
 
   private setupErrorHandling(): void {
-    this.server.onerror = (error) => {
-      console.error("[MCP Error]", error);
+    this.server.onerror = (error: any) => {
+      // Never log the full error object: axios errors carry `config.headers`,
+      // which hold secrets like `x-api-key`. Log only a sanitized message plus
+      // status/url so credentials can't leak into logs.
+      const status = error?.response?.status;
+      const url = error?.config?.url;
+      const detail = [status && `HTTP ${status}`, url]
+        .filter(Boolean)
+        .join(" ");
+      console.error(
+        "[MCP Error]",
+        error?.message || String(error),
+        detail || ""
+      );
     };
 
     process.on("SIGINT", async () => {
@@ -347,6 +402,8 @@ export class CotributeMCPServer {
       ...(this.coadminAxios ? coadminApiTools : []),
       ...(this.papertrailAxios ? papertrailTools : []),
       ...(this.githubAxios ? githubTools : []),
+      ...(this.aiaAxios ? aiaTools : []),
+      ...(this.aiaAxios && this.aiaEnableOps ? aiaOpsTools : []),
     ].map((tool: any) => ({
       ...tool,
       annotations: { ...READ_ONLY_ANNOTATIONS, ...(tool.annotations ?? {}) },

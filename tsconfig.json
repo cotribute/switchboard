@@ -30,7 +30,8 @@
     "src/heroku-postgres/**/*.ts",
     "src/coadmin-api/**/*.ts",
     "src/papertrail/**/*.ts",
-    "src/github/**/*.ts"
+    "src/github/**/*.ts",
+    "src/aia/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }
