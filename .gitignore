@@ -14,3 +14,6 @@ coverage
 
 # Dev Personal Claude Agent Configurations
 .claude/dev-personal-agents/
+
+# Local verification scripts
+scratch/
