@@ -19,14 +19,42 @@ import {
   SQL_FGP_PLAID_SESSION_CANDIDATES,
   SQL_FGP_LIGHTNING_TEMPLATE_IDS,
   SQL_FGP_SESSIONS_EXISTS,
-  SQL_FGP_RESOLVE_FI_BY_UUID,
-  SQL_FGP_RESOLVE_FI_BY_TEXT,
 } from "./fgp-utilization-sql.js";
 import {
   computeFgpUtilization,
   EffectivCandidate,
   PlaidCandidate,
 } from "./fgp-utilization.js";
+import {
+  SQL_AUDIT_TABLES_EXIST,
+  SQL_AUDIT_COVERAGE,
+  SQL_CONFIG_AUDIT_SEARCH,
+  SQL_CONFIG_AUDIT_COVERAGE,
+  SQL_CONFIG_AUDIT_CHANGED_KEYS,
+  SQL_CONFIG_AUDIT_DETAIL_INTERNAL,
+  SQL_CONFIG_AUDIT_DETAIL_PORTAL,
+  SQL_AUDIT_ACTORS_INTERNAL,
+  SQL_AUDIT_ACTORS_PORTAL,
+  SQL_RESOLVE_ACTOR,
+  SQL_SYSADMIN_EMAILS,
+  SQL_FUAL_NULL_ITEM_UUID,
+  DEFAULT_EXCLUDED_ITEM_TYPES,
+  NO_FI_ITEM_TYPES,
+  SYSADMIN_PERMISSION_GROUP,
+} from "./config-audit-sql.js";
+import {
+  AuditRow,
+  ActorRef,
+  ActorKind,
+  rollupSessions,
+  summarize,
+  actorKey,
+  changeKey,
+  flagCrossTrailDupes,
+  renderChanges,
+  nameFromEmail,
+  actorKeyOf,
+} from "./config-audit.js";
 
 export function createHandlers(
   prodPool: Pool | null,
@@ -46,6 +74,47 @@ export function createHandlers(
     if (!p)
       throw new Error(`No database pool configured for env: ${effective}`);
     return p;
+  }
+
+  const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /**
+   * Resolve an FI name fragment / slug / uuid to exactly one row, using the
+   * established response idioms: { ok: false, error } when nothing matched and
+   * { ambiguous: true, candidates } when several did. Returns { fi } on a hit.
+   */
+  async function resolveFi(
+    p: Pool,
+    raw: string
+  ): Promise<
+    | { fi: any }
+    | { ok: false; error: string }
+    | { ambiguous: true; candidates: any[] }
+  > {
+    const isUuid = UUID_RE.test(raw);
+    const sql = isUuid
+      ? `SELECT id, name, slug, meta FROM financial_institutions WHERE id = $1`
+      : `SELECT id, name, slug, meta
+           FROM financial_institutions
+          WHERE name ILIKE $1 OR slug ILIKE $1
+          ORDER BY name
+          LIMIT 10`;
+    const res = await p.query(sql, [isUuid ? raw : `%${raw}%`]);
+    if (res.rows.length === 0) {
+      return { ok: false, error: `No financial institution matched "${raw}".` };
+    }
+    if (res.rows.length > 1) {
+      return {
+        ambiguous: true,
+        candidates: res.rows.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+        })),
+      };
+    }
+    return { fi: res.rows[0] };
   }
 
   return {
@@ -754,30 +823,9 @@ export function createHandlers(
       let fiFilter: { id: string; name: string; slug: string } | null = null;
       const rawFi = String(args.fi_query ?? "").trim();
       if (rawFi) {
-        const isUuid =
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-            rawFi
-          );
-        const fiRes = isUuid
-          ? await p.query(SQL_FGP_RESOLVE_FI_BY_UUID, [rawFi])
-          : await p.query(SQL_FGP_RESOLVE_FI_BY_TEXT, [`%${rawFi}%`]);
-        if (fiRes.rows.length === 0) {
-          return {
-            ok: false,
-            error: `No financial institution matched "${rawFi}".`,
-          };
-        }
-        if (fiRes.rows.length > 1) {
-          return {
-            ambiguous: true,
-            candidates: fiRes.rows.map((r: any) => ({
-              id: r.id,
-              name: r.name,
-              slug: r.slug,
-            })),
-          };
-        }
-        fiFilter = fiRes.rows[0];
+        const resolved = await resolveFi(p, rawFi);
+        if (!("fi" in resolved)) return resolved;
+        fiFilter = resolved.fi;
       }
 
       const fiIdParam = fiFilter ? fiFilter.id : null;
@@ -976,9 +1024,640 @@ export function createHandlers(
         totals: { ...result.totals, costs: totals_costs },
       };
     },
+
+    // ── Config-change audit (default env: "prod") ────────────────────────
+    //
+    // Two trails, one timeline. `versions` is the coadmin back office
+    // (Cotribute sysadmins only); `financial_user_audit_logs` is the
+    // boa-settings portal (Cotribute staff and FI staff). Sysadmin
+    // classification follows dreambigger's hasSysadminAccess rule, never the
+    // email domain.
+
+    db_audit_actors: async (args) => {
+      const p = pool(args.env, "prod");
+
+      const guard = (await p.query(SQL_AUDIT_TABLES_EXIST)).rows[0];
+      if (!guard?.versions_exists && !guard?.fual_exists) {
+        return { ok: false, error: "Neither audit table exists in this env." };
+      }
+
+      const sinceDays = clampInt(args.since_days, 90, 1, 730);
+      const until = new Date();
+      const since = new Date(until.getTime() - sinceDays * 86_400_000);
+
+      let fiId: string | null = null;
+      const rawFi = String(args.fi_query ?? "").trim();
+      if (rawFi) {
+        const resolved = await resolveFi(p, rawFi);
+        if (!("fi" in resolved)) return resolved;
+        fiId = resolved.fi.id;
+      }
+
+      // Sequential — the pool is max: 3 and these are three separate scans.
+      const params = scopedParams({
+        start: since.toISOString(),
+        end: until.toISOString(),
+        fiId,
+        excluded: null,
+      });
+      const internal = guard?.versions_exists
+        ? (await p.query(SQL_AUDIT_ACTORS_INTERNAL, params)).rows
+        : [];
+      const portal = guard?.fual_exists
+        ? (await p.query(SQL_AUDIT_ACTORS_PORTAL, params)).rows
+        : [];
+
+      // Fold both trails onto one person, keyed on lowercased email. Cotribute
+      // staff appear as one admins row plus a financial_users row per FI, so
+      // without this a single person shows up dozens of times.
+      const people = new Map<string, any>();
+      const unresolved: any[] = [];
+
+      const touch = (key: string, seed: () => any) => {
+        let entry = people.get(key);
+        if (!entry) {
+          entry = seed();
+          people.set(key, entry);
+        }
+        return entry;
+      };
+
+      for (const row of internal) {
+        const email: string | null = row.admin_email
+          ? String(row.admin_email).toLowerCase()
+          : null;
+        if (!email) {
+          unresolved.push({
+            whodunnit_raw: row.actor_raw === "" ? null : row.actor_raw,
+            kind: row.actor_raw === "" ? "system" : "unknown_admin_id",
+            rows: Number(row.rows),
+            first_at: row.first_at,
+            last_at: row.last_at,
+            note:
+              row.actor_raw === ""
+                ? "Background job, console session or API write with no signed-in admin."
+                : "whodunnit does not match any admins row.",
+          });
+          continue;
+        }
+        const entry = touch(email, () => blankActor(email));
+        entry.admin_ids.push(String(row.admin_id));
+        // An admins row carrying the Acquire portal permission IS the sysadmin
+        // definition, so anyone writing to `versions` is one by construction.
+        entry.kind = "sysadmin";
+        mergeActivity(entry.internal, row);
+        collectFis(entry, row.fi_names);
+        collectTypes(entry, row.item_types);
+      }
+
+      for (const row of portal) {
+        const email: string | null = row.login_id
+          ? String(row.login_id).toLowerCase()
+          : null;
+        if (!email) {
+          unresolved.push({
+            whodunnit_raw: row.actor_raw,
+            kind: "unknown_financial_user",
+            rows: Number(row.rows),
+            note: "financial_user_id does not match any financial_users row.",
+          });
+          continue;
+        }
+        const entry = touch(email, () => blankActor(email));
+        if (row.first_name || row.last_name) {
+          entry.display_name = [row.first_name, row.last_name]
+            .filter(Boolean)
+            .join(" ");
+          entry.name_source = "portal_profile";
+        }
+        if (row.is_sysadmin) {
+          entry.kind = "sysadmin";
+          if (row.admin_id && !entry.admin_ids.includes(String(row.admin_id))) {
+            entry.admin_ids.push(String(row.admin_id));
+          }
+        } else if (entry.kind !== "sysadmin") {
+          entry.kind = "client";
+        }
+        entry.portal.financial_user_ids.push({
+          fi_id: row.actor_fi_id,
+          fi_name: row.actor_fi_name,
+        });
+        for (const r of row.roles ?? []) {
+          if (!entry.roles.includes(r)) entry.roles.push(r);
+        }
+        mergeActivity(entry.portal, row);
+        collectFis(entry, row.fi_names);
+        collectTypes(entry, row.item_types);
+      }
+
+      let actors = [...people.values()];
+
+      const query = String(args.query ?? "")
+        .trim()
+        .toLowerCase();
+      if (query) {
+        actors = actors.filter(
+          (a) =>
+            a.email?.includes(query) ||
+            a.display_name.toLowerCase().includes(query) ||
+            a.admin_ids.includes(query) ||
+            a.portal.financial_user_ids.some((f: any) => f.fi_id === query)
+        );
+      }
+
+      actors.sort(
+        (a, b) =>
+          b.internal.rows + b.portal.rows - (a.internal.rows + a.portal.rows)
+      );
+      for (const a of actors) finalizeActor(a);
+
+      return {
+        ok: true,
+        window: { since: since.toISOString(), until: until.toISOString() },
+        fi_filter: fiId,
+        sysadmin_rule: `admins row holding the "${SYSADMIN_PERMISSION_GROUP}" permission group (matches dreambigger's hasSysadminAccess)`,
+        actors,
+        unresolved,
+        notes: auditNotes(),
+      };
+    },
+
+    db_config_audit_search: async (args) => {
+      const p = pool(args.env, "prod");
+
+      const guard = (await p.query(SQL_AUDIT_TABLES_EXIST)).rows[0];
+      if (!guard?.versions_exists && !guard?.fual_exists) {
+        return { ok: false, error: "Neither audit table exists in this env." };
+      }
+
+      const start = normalizeDate(args.start_date);
+      const end = normalizeDate(args.end_date);
+      if (!start || !end) {
+        return {
+          ok: false,
+          error: "start_date and end_date must be YYYY-MM-DD.",
+        };
+      }
+      if (start >= end) {
+        return { ok: false, error: "start_date must be before end_date." };
+      }
+
+      const trail: string = ["both", "internal", "portal"].includes(args.trail)
+        ? args.trail
+        : "both";
+      const limit = clampInt(args.limit, 50, 1, 200);
+      const gapMinutes = clampInt(args.session_gap_minutes, 30, 1, 1440);
+
+      let fiId: string | null = null;
+      const rawFi = String(args.fi_query ?? "").trim();
+      if (rawFi) {
+        const resolved = await resolveFi(p, rawFi);
+        if (!("fi" in resolved)) return resolved;
+        fiId = resolved.fi.id;
+      }
+
+      // Actor resolution. An unmatched actor_query is an empty result, not an
+      // unfiltered one — passing [] makes `= ANY([])` false for every row.
+      let internalActorIds: string[] | null = null;
+      let portalActorIds: string[] | null = null;
+      const rawActor = String(args.actor_query ?? "").trim();
+      if (rawActor) {
+        const res = await p.query(SQL_RESOLVE_ACTOR, [
+          `%${rawActor}%`,
+          rawActor,
+        ]);
+        const row = res.rows[0] ?? {};
+        internalActorIds = row.admin_ids ?? [];
+        portalActorIds = row.financial_user_ids ?? [];
+        if (internalActorIds!.length === 0 && portalActorIds!.length === 0) {
+          return {
+            ok: false,
+            error: `No actor matched "${rawActor}". Call db_audit_actors to see who is in the data.`,
+          };
+        }
+      }
+
+      const itemTypes: string[] | null =
+        Array.isArray(args.item_types) && args.item_types.length > 0
+          ? args.item_types
+          : null;
+      // Application-level noise is excluded unless the caller asked for it.
+      const excluded = itemTypes ? null : DEFAULT_EXCLUDED_ITEM_TYPES;
+
+      const events: string[] | null =
+        Array.isArray(args.events) && args.events.length > 0
+          ? args.events
+          : null;
+
+      const MAX_ROWS = 5000;
+      const params = scopedParams({
+        start,
+        end,
+        itemTypes,
+        events,
+        internalActorIds,
+        portalActorIds,
+        fiId,
+        trail,
+        excluded,
+      });
+
+      const searchRes = await p.query(SQL_CONFIG_AUDIT_SEARCH, [
+        ...params,
+        MAX_ROWS,
+      ]);
+      const rows: AuditRow[] = searchRes.rows;
+
+      // Resolve every actor present, then roll rows up into edit sessions.
+      const actors = await buildActorIndex(p, rows);
+      const provisional = rollupSessions(rows, { gapMinutes, actors });
+
+      // Changed keys only for the sessions we're about to return — this is the
+      // only query that touches object_changes, and it does so for at most a
+      // few hundred ids rather than the whole table.
+      const page = provisional.slice(0, limit);
+      const internalIds: number[] = [];
+      const portalIds: number[] = [];
+      for (const s of page) {
+        const target = s.trail === "internal" ? internalIds : portalIds;
+        target.push(Number(s.detail_ids.first));
+        if (s.detail_ids.last !== s.detail_ids.first) {
+          target.push(Number(s.detail_ids.last));
+        }
+      }
+      const keysRes = await p.query(SQL_CONFIG_AUDIT_CHANGED_KEYS, [
+        internalIds,
+        portalIds,
+      ]);
+      const changedKeys = new Map<
+        string,
+        { keys: string[]; bytes: number | null }
+      >();
+      for (const r of keysRes.rows) {
+        changedKeys.set(changeKey(r.trail, r.id), {
+          keys: r.changed_keys ?? [],
+          bytes: r.bytes == null ? null : Number(r.bytes),
+        });
+      }
+
+      const sessions = rollupSessions(rows, {
+        gapMinutes,
+        actors,
+        changedKeys,
+      }).slice(0, limit);
+      flagCrossTrailDupes(sessions);
+
+      const all = rollupSessions(rows, { gapMinutes, actors });
+      const summary = summarize(all);
+
+      const unattributed = rows.filter((r) => !r.fi_id);
+      const unattributedByType = new Map<string, number>();
+      for (const r of unattributed) {
+        unattributedByType.set(
+          r.item_type,
+          (unattributedByType.get(r.item_type) ?? 0) + 1
+        );
+      }
+
+      const notes = auditNotes();
+      if (rows.length >= MAX_ROWS) {
+        notes.push(
+          `Hit the ${MAX_ROWS}-row scan cap; rollups cover only the most recent ${MAX_ROWS} rows in the window. Narrow the window or add filters.`
+        );
+      }
+      if (unattributed.length > 0) {
+        notes.push(
+          "Rows with no financial institution are either types that have no FI link by design " +
+            `(${NO_FI_ITEM_TYPES.join(", ")}) or destroy events whose target row is gone.`
+        );
+      }
+
+      let diagnostics: any;
+      if (args.include_diagnostics === true) {
+        const cov = await p.query(SQL_CONFIG_AUDIT_COVERAGE, params);
+        const nulls = await p.query(SQL_FUAL_NULL_ITEM_UUID, [start, end]);
+        diagnostics = {
+          attribution_by_item_type: cov.rows.map((r: any) => ({
+            item_type: r.item_type,
+            rows_total: Number(r.rows_total),
+            rows_with_fi: Number(r.rows_with_fi),
+            rows_null_fi: Number(r.rows_null_fi),
+            expected_null: NO_FI_ITEM_TYPES.includes(r.item_type),
+          })),
+          fual_rows_with_null_item_uuid: Number(
+            nulls.rows[0]?.null_item_uuid_rows ?? 0
+          ),
+        };
+      }
+
+      return {
+        ok: true,
+        window: { start, end },
+        filters_applied: {
+          actor_query: rawActor || null,
+          fi_query: rawFi || null,
+          item_types: itemTypes,
+          excluded_item_types: excluded,
+          events,
+          trail,
+          session_gap_minutes: gapMinutes,
+        },
+        coverage: await coverageFloors(p),
+        totals: {
+          rows: rows.length,
+          sessions: all.length,
+          actors: summary.by_actor.length,
+          fis: summary.by_fi.filter((f) => f.fi_id).length,
+          by_event: countEvents(rows),
+        },
+        by_actor: summary.by_actor,
+        by_actor_kind: summary.by_actor_kind,
+        by_fi: summary.by_fi,
+        by_item_type: summary.by_item_type,
+        by_month: summary.by_month,
+        unattributed_fi: {
+          rows: unattributed.length,
+          by_item_type: [...unattributedByType.entries()]
+            .map(([item_type, n]) => ({ item_type, rows: n }))
+            .sort((a, b) => b.rows - a.rows),
+        },
+        sessions,
+        truncated: all.length > sessions.length,
+        ...(diagnostics ? { diagnostics } : {}),
+        notes,
+      };
+    },
+
+    db_config_audit_detail: async (args) => {
+      const p = pool(args.env, "prod");
+
+      if (args.trail !== "internal" && args.trail !== "portal") {
+        return { ok: false, error: 'trail must be "internal" or "portal".' };
+      }
+      const id = Number(args.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return { ok: false, error: "id must be a positive integer." };
+      }
+
+      const sql =
+        args.trail === "internal"
+          ? SQL_CONFIG_AUDIT_DETAIL_INTERNAL
+          : SQL_CONFIG_AUDIT_DETAIL_PORTAL;
+      const res = await p.query(sql, [id]);
+      const row = res.rows[0];
+      if (!row) {
+        return {
+          ok: false,
+          error: `No ${args.trail} audit row with id ${id}.`,
+        };
+      }
+
+      const mode = args.mode === "values" ? "values" : "structural";
+      const keys = Array.isArray(args.keys) ? args.keys : undefined;
+      const rendered = renderChanges(row.item_type, row.object_changes, {
+        mode,
+        keys,
+      });
+
+      const actors = await buildActorIndex(p, [row as AuditRow]);
+      const actor = actors.get(actorKeyOf(row as AuditRow));
+
+      return {
+        ok: true,
+        trail: row.trail,
+        id: Number(row.id),
+        item_type: row.item_type,
+        item_id: row.item_id,
+        event: row.event,
+        occurred_at: row.occurred_at,
+        ip: row.ip,
+        actor: actor
+          ? {
+              display_name: actor.display_name,
+              email: actor.email,
+              kind: actor.kind,
+            }
+          : null,
+        total_bytes: row.bytes == null ? null : Number(row.bytes),
+        ...rendered,
+        notes: [...rendered.notes, ...auditNotes()],
+      };
+    },
   };
 }
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+// ── Config-audit helpers ────────────────────────────────────────────────────
+
+/** Positional params for the shared `scoped` CTE ($1–$9). */
+function scopedParams(opts: {
+  start: string;
+  end: string;
+  itemTypes?: string[] | null;
+  events?: string[] | null;
+  internalActorIds?: string[] | null;
+  portalActorIds?: string[] | null;
+  fiId?: string | null;
+  trail?: string;
+  excluded?: string[] | null;
+}): any[] {
+  return [
+    opts.start,
+    opts.end,
+    opts.itemTypes ?? null,
+    opts.events ?? null,
+    opts.internalActorIds ?? null,
+    opts.portalActorIds ?? null,
+    opts.fiId ?? null,
+    opts.trail ?? "both",
+    opts.excluded ?? null,
+  ];
+}
+
+function clampInt(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(Math.trunc(n), min), max);
+}
+
+function normalizeDate(value: unknown): string | null {
+  const s = String(value ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+function countEvents(rows: AuditRow[]): Record<string, number> {
+  const out: Record<string, number> = { create: 0, update: 0, destroy: 0 };
+  for (const r of rows) out[r.event] = (out[r.event] ?? 0) + 1;
+  return out;
+}
+
+function blankActor(email: string): any {
+  return {
+    display_name: nameFromEmail(email),
+    name_source: "email_heuristic",
+    email,
+    kind: "client" as ActorKind,
+    admin_ids: [] as string[],
+    roles: [] as string[],
+    fis: [] as string[],
+    top_item_types: [] as string[],
+    internal: { rows: 0, first_at: null, last_at: null },
+    portal: {
+      rows: 0,
+      first_at: null,
+      last_at: null,
+      financial_user_ids: [] as any[],
+    },
+  };
+}
+
+function mergeActivity(target: any, row: any) {
+  target.rows += Number(row.rows);
+  const first = row.first_at ? new Date(row.first_at).toISOString() : null;
+  const last = row.last_at ? new Date(row.last_at).toISOString() : null;
+  if (first && (!target.first_at || first < target.first_at))
+    target.first_at = first;
+  if (last && (!target.last_at || last > target.last_at)) target.last_at = last;
+}
+
+function collectFis(entry: any, names: string[] | null) {
+  for (const n of names ?? []) if (!entry.fis.includes(n)) entry.fis.push(n);
+}
+
+function collectTypes(entry: any, types: string[] | null) {
+  for (const t of types ?? [])
+    if (!entry.top_item_types.includes(t)) entry.top_item_types.push(t);
+}
+
+function finalizeActor(entry: any) {
+  entry.fis.sort();
+  entry.top_item_types.sort();
+  entry.fi_count = entry.fis.length;
+  entry.total_rows = entry.internal.rows + entry.portal.rows;
+}
+
+/**
+ * Resolve every actor referenced by a set of rows to a name, email and kind.
+ *
+ * Internal rows carry an `admins.id`; portal rows carry a `financial_users.id`.
+ * Sysadmin status comes from the "[Acquire] Applications Portal" permission
+ * group, matching dreambigger's hasSysadminAccess — never from the email
+ * domain.
+ */
+async function buildActorIndex(
+  p: Pool,
+  rows: AuditRow[]
+): Promise<Map<string, ActorRef>> {
+  const out = new Map<string, ActorRef>();
+  const adminIds = new Set<string>();
+  const userIds = new Set<string>();
+
+  for (const r of rows) {
+    if (r.trail === "internal") {
+      if (r.actor_raw) adminIds.add(r.actor_raw);
+    } else if (r.actor_raw) {
+      userIds.add(r.actor_raw);
+    }
+  }
+
+  const sysadmins = new Map<string, string>();
+  for (const r of (await p.query(SQL_SYSADMIN_EMAILS)).rows) {
+    sysadmins.set(String(r.email), String(r.admin_id));
+  }
+
+  if (adminIds.size > 0) {
+    // `admins` has no name columns, so pick up the person's real name from
+    // their portal profile in the same query rather than a second round trip.
+    const res = await p.query(
+      `SELECT a.id::text AS id, lower(a.email) AS email,
+              (SELECT fu.first_name || ' ' || fu.last_name
+                 FROM financial_users fu
+                WHERE lower(fu.login_id) = lower(a.email)
+                  AND fu.first_name IS NOT NULL
+                LIMIT 1) AS profile_name
+         FROM admins a
+        WHERE a.id::text = ANY($1::text[])`,
+      [[...adminIds]]
+    );
+    for (const r of res.rows) {
+      out.set(actorKey("internal", r.id), {
+        actor_key: r.email,
+        display_name: r.profile_name?.trim() || nameFromEmail(r.email),
+        email: r.email,
+        // Writing to `versions` requires a coadmin login, so these are staff by
+        // construction; the permission group confirms it where present.
+        kind: "sysadmin",
+        admin_id: sysadmins.get(r.email) ?? r.id,
+      });
+    }
+  }
+
+  if (userIds.size > 0) {
+    const res = await p.query(
+      `SELECT id::text AS id, lower(login_id) AS email, login_id_type,
+              first_name, last_name
+         FROM financial_users
+        WHERE id = ANY($1::uuid[])`,
+      [[...userIds]]
+    );
+    for (const r of res.rows) {
+      const isSysadmin =
+        r.login_id_type === "email" && sysadmins.has(String(r.email));
+      const name = [r.first_name, r.last_name].filter(Boolean).join(" ");
+      out.set(actorKey("portal", r.id), {
+        actor_key: r.email,
+        display_name: name || nameFromEmail(r.email),
+        email: r.email,
+        kind: isSysadmin ? "sysadmin" : "client",
+        admin_id: isSysadmin ? sysadmins.get(String(r.email)) : null,
+      });
+    }
+  }
+
+  // The internal trail only knows an admins row, and `admins` has no name
+  // columns — so backfill real names from the portal profile of the same
+  // person (matched on email) before falling back to the email heuristic.
+  const namesByEmail = new Map<string, string>();
+  for (const ref of out.values()) {
+    if (ref.email && ref.display_name !== nameFromEmail(ref.email)) {
+      namesByEmail.set(ref.email, ref.display_name);
+    }
+  }
+  for (const ref of out.values()) {
+    const better = ref.email ? namesByEmail.get(ref.email) : undefined;
+    if (better) ref.display_name = better;
+  }
+
+  // Blank whodunnit: a background job, console session or API write.
+  out.set(actorKey("internal", ""), {
+    actor_key: "__system__",
+    display_name: "System (background job)",
+    email: null,
+    kind: "system",
+  });
+
+  return out;
+}
+
+async function coverageFloors(p: Pool) {
+  const r = (await p.query(SQL_AUDIT_COVERAGE)).rows[0] ?? {};
+  return { versions_since: r.versions_since, fual_since: r.fual_since };
+}
+
+function auditNotes(): string[] {
+  return [
+    "Counts are edit sessions, not rows: PaperTrail writes one row per save, so a single editing session commonly produces 7+ rows.",
+    "`legacy_model_versions` is NOT part of this data. It holds 4.8M rows of legacy WeServe runtime records (Pulse, EmailMetric, Token) and no Acquire configuration.",
+    'Sysadmin vs client comes from the "[Acquire] Applications Portal" permission group on the `admins` row (dreambigger\'s hasSysadminAccess), not from the email domain.',
+    "A few pre-sysadmin-era shared accounts — notably support@cotributemail.com, one of the busiest portal actors — have no `admins` row and therefore classify as `client`. That construct predates the permission model and the individuals behind it are not recoverable.",
+    "Audit coverage in settings-api is incomplete: brand settings, custom domains, MFA settings and the PDF template builder have mutating routes with no audit wiring, and write failures are logged rather than raised. Absence of rows means 'not recorded', not 'did not happen'.",
+  ];
 }

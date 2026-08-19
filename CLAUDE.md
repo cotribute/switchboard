@@ -25,7 +25,7 @@ src/
   google-analytics/     # 3 tools — GA4 account summaries, reports, metadata
   customerio/           # 12 tools — Customer.io customers, segments, campaigns, newsletters
   instantly/            # 18 tools — Instantly.ai campaigns, leads, accounts, emails
-  heroku-postgres/      # 27 tools — Direct prod/sandbox DB reads (CX support) + business-outcomes battery
+  heroku-postgres/      # 31 tools — Direct prod/sandbox DB reads (CX support) + business-outcomes battery + config-change audit
   coadmin-api/          # 16 tools — coadmin-api sysadmin reads with ciphertext decryption (CX support)
   papertrail/           # 2 tools  — Papertrail log search (CX support)
   github/               # 3 tools  — Cotribute monorepo code search + file access (CX support)
@@ -54,12 +54,12 @@ All endpoints accept auth via `Authorization: Bearer <token>` header OR `:token`
 
 ## Cowork connector setup
 
-| Scope | Connectors |
-|---|---|
-| Org-level (everyone) | Gmail, Google Calendar, Google Drive, Slack |
-| GTM team | `/dealfront/mcp`, `/pipedrive/mcp`, `/google-analytics/mcp`, `/instantly/mcp` (Switchboard) |
-| CX team | `/frontapp/mcp`, `/customerio/mcp` (Switchboard) + Anthropic GitHub Integration (general-purpose) |
-| CX individual profiles | `/heroku-postgres/mcp`, `/coadmin-api/mcp`, `/papertrail/mcp`, `/github/mcp` (Switchboard) |
+| Scope                  | Connectors                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| Org-level (everyone)   | Gmail, Google Calendar, Google Drive, Slack                                                       |
+| GTM team               | `/dealfront/mcp`, `/pipedrive/mcp`, `/google-analytics/mcp`, `/instantly/mcp` (Switchboard)       |
+| CX team                | `/frontapp/mcp`, `/customerio/mcp` (Switchboard) + Anthropic GitHub Integration (general-purpose) |
+| CX individual profiles | `/heroku-postgres/mcp`, `/coadmin-api/mcp`, `/papertrail/mcp`, `/github/mcp` (Switchboard)        |
 
 The CX support endpoints (heroku-postgres, coadmin-api, papertrail, github) are deliberately per-individual: they access prod data, decrypt ciphertext, and read production logs. Do not add them to any shared org-wide configuration.
 
@@ -68,8 +68,31 @@ The Switchboard `/github/mcp` is scoped to the Cotribute monorepo (bot PAT, defa
 ## Support-research tool ownership
 
 Tool ownership across the four CX support endpoints is disjoint by construction — there's exactly one tool per data type:
+
 - **coadmin-api** owns everything app-scoped that touches encrypted columns: decision-status logs, API request logs, core-banking logs, FIS GKYC, financial email logs. It also owns the plaintext things it covers (effectiv, Plaid IDV, Repay payments).
 - **heroku-postgres** owns what coadmin doesn't expose: entry-point lookup (financial_users / onboarding_applications / FIs); config tables (flows + their action/transform/routing/offer/prefill internals, decision_statuses + decision_rules, FI products, share_categories/products, financial_application_mapping_templates, core_banking_configurations); transaction snapshots (financial_applications, fraud results + reasons, OFAC watchlist, credit report metadata + corelation pulls, business verification (Middesk + FIS product), Vouched IDV, Stripe payments, OTP / Twilio); plus a small legacy bridge (organizations.meta lookup, submissions → onboarding_applications resolution); plus one Cowork-skill battery (`db_business_outcomes_battery`) that bundles 10 aggregate queries for the `/generate-business-outcomes` skill into a single round-trip — see `skills/generate-business-outcomes/SKILL.md` and `src/heroku-postgres/business-outcomes-sql.ts`. Skills under `skills/` follow Anthropic's standard layout (one directory per skill, `SKILL.md` inside, YAML frontmatter required).
+
+It also owns **config-change history** (`db_audit_actors`, `db_config_audit_search`,
+`db_config_audit_detail`) over the two audit trails: `versions` (PaperTrail, written by
+the coadmin Rails back office — Cotribute sysadmins) and `financial_user_audit_logs`
+(written by settings-api/boa-settings — Cotribute staff and FI staff alike). These answer
+"who changed what, for which FI, when". Three things about them are deliberate:
+
+- **They redact, never decrypt** — so they stay on the right side of the ownership
+  boundary above. Field-level encryption covers the SSN and nothing else; names, dates of
+  birth, document numbers and password hashes sit in the clear in `object_changes`, so
+  values are denylisted by key and by value shape, application-level item types are
+  excluded by default, and values are withheld entirely for PII-bearing types.
+- **Sysadmin vs client comes from the permission model, not the email domain** — an
+  `admins` row holding the "[Acquire] Applications Portal" group, mirroring
+  `packages/acquire-api/src/utils/hasSysadminAccess.ts` in dreambigger.
+- **They default to `env: "prod"`** even though they are config-shaped, because audit
+  questions are about what happened to the live configuration and FI staff only exist in
+  the prod portal.
+
+`legacy_model_versions` is intentionally out of scope: same PaperTrail schema, but it holds
+the integer-PK legacy WeServe models (Pulse, EmailMetric, Token, Bucket) — 4.8M rows of
+runtime data and zero Acquire config.
 
 Transaction tools default to `env: "prod"`; config tools default to `env: "sandbox"` (clients build and test config there before promoting). DB pools are module-level singletons in `index.ts` — shared across MCP sessions for the lifetime of the dyno.
 
@@ -100,27 +123,27 @@ git push heroku master    # Deploy to Heroku
 
 ## Environment Variables
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `FRONTAPP_API_TOKEN` | Yes | Front.app API Bearer token |
-| `MCP_API_KEY` | No | Bearer token protecting all `/<module>/mcp` endpoints |
-| `PIPEDRIVE_API_TOKEN` | No | Pipedrive API token |
-| `PIPEDRIVE_DOMAIN` | No* | Pipedrive company subdomain (required if token is set) |
-| `DEALFRONT_API_TOKEN` | No | Dealfront/Leadfeeder API token |
-| `DEALFRONT_IP_ENRICH_API_KEY` | No | Dealfront IP enrichment key (optional, gates `dealfront_enrich_ip`) |
-| `GOOGLE_ANALYTICS_CREDENTIALS` | No | Base64-encoded Google service account JSON for GA4 access |
-| `CUSTOMERIO_API_KEY` | No | Customer.io App API key |
-| `CUSTOMERIO_REGION` | No | Customer.io region: `us` (default) or `eu` |
-| `INSTANTLY_API_KEY` | No | Instantly.ai V2 API key |
-| `CLAUDE_URL` | No | Prod read-only Postgres replica (for `/heroku-postgres/mcp`) |
-| `CLAUDE_UAT_URL` | No | Sandbox Postgres (for `/heroku-postgres/mcp`) |
-| `DREAMBIGGER_API_BASE_URL` | No | coadmin-api base URL (for `/coadmin-api/mcp`) |
-| `ACQUIRE_API_KEY` | No | coadmin-api `X-Cotribute-Api-Key` header value |
-| `ACQUIRE_API_SECRET` | No | coadmin-api `X-Cotribute-Api-Secret` header value |
-| `ACQUIRE_API_CLIENT_ID` | No | coadmin-api `X-Cotribute-Client-Id` header value |
-| `PAPERTRAIL_API_TOKEN` | No | Papertrail API token (for `/papertrail/mcp`) |
-| `GITHUB_TOKEN` | No | GitHub fine-grained PAT (for `/github/mcp`) |
-| `GITHUB_DEFAULT_ORG` | No | Default GitHub org for `github_search_code` (default: `cotribute`) |
+| Variable                       | Required | Purpose                                                             |
+| ------------------------------ | -------- | ------------------------------------------------------------------- |
+| `FRONTAPP_API_TOKEN`           | Yes      | Front.app API Bearer token                                          |
+| `MCP_API_KEY`                  | No       | Bearer token protecting all `/<module>/mcp` endpoints               |
+| `PIPEDRIVE_API_TOKEN`          | No       | Pipedrive API token                                                 |
+| `PIPEDRIVE_DOMAIN`             | No\*     | Pipedrive company subdomain (required if token is set)              |
+| `DEALFRONT_API_TOKEN`          | No       | Dealfront/Leadfeeder API token                                      |
+| `DEALFRONT_IP_ENRICH_API_KEY`  | No       | Dealfront IP enrichment key (optional, gates `dealfront_enrich_ip`) |
+| `GOOGLE_ANALYTICS_CREDENTIALS` | No       | Base64-encoded Google service account JSON for GA4 access           |
+| `CUSTOMERIO_API_KEY`           | No       | Customer.io App API key                                             |
+| `CUSTOMERIO_REGION`            | No       | Customer.io region: `us` (default) or `eu`                          |
+| `INSTANTLY_API_KEY`            | No       | Instantly.ai V2 API key                                             |
+| `CLAUDE_URL`                   | No       | Prod read-only Postgres replica (for `/heroku-postgres/mcp`)        |
+| `CLAUDE_UAT_URL`               | No       | Sandbox Postgres (for `/heroku-postgres/mcp`)                       |
+| `DREAMBIGGER_API_BASE_URL`     | No       | coadmin-api base URL (for `/coadmin-api/mcp`)                       |
+| `ACQUIRE_API_KEY`              | No       | coadmin-api `X-Cotribute-Api-Key` header value                      |
+| `ACQUIRE_API_SECRET`           | No       | coadmin-api `X-Cotribute-Api-Secret` header value                   |
+| `ACQUIRE_API_CLIENT_ID`        | No       | coadmin-api `X-Cotribute-Client-Id` header value                    |
+| `PAPERTRAIL_API_TOKEN`         | No       | Papertrail API token (for `/papertrail/mcp`)                        |
+| `GITHUB_TOKEN`                 | No       | GitHub fine-grained PAT (for `/github/mcp`)                         |
+| `GITHUB_DEFAULT_ORG`           | No       | Default GitHub org for `github_search_code` (default: `cotribute`)  |
 
 ## Transport
 

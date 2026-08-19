@@ -588,4 +588,170 @@ export const tools = [
       required: ["start_date", "end_date"],
     },
   },
+  // ── Config-change audit (default env: "prod") ────────────────────────────
+
+  {
+    name: "db_audit_actors",
+    description:
+      "Directory of people who have made configuration changes, unified across both audit trails. " +
+      "Use this FIRST whenever a question names a person ('what has Michael Towson been up to') — " +
+      "the internal trail stores only an `admins.id` and the `admins` table has no name columns, so a " +
+      "human name cannot be matched without this tool. Returns, per person: display name, email, " +
+      "`kind` (sysadmin = Cotribute staff holding the '[Acquire] Applications Portal' permission group, " +
+      "client = financial-institution staff, system = background jobs with no signed-in admin), the " +
+      "internal admin id and per-FI portal user ids, activity counts, the FIs they touched, and their " +
+      "most-changed item types. Pass `fi_query` to answer 'who on their team makes changes'. " +
+      "Feed the returned email back into db_config_audit_search as `actor_query` for an exact match. " +
+      "Defaults to prod.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Name fragment, email fragment, admins.id, or financial_users.id. Omit to list everyone active in the window.",
+        },
+        fi_query: {
+          type: "string",
+          description:
+            "Restrict to actors who changed this FI's records. Name fragment, slug, or uuid.",
+        },
+        since_days: {
+          type: "number",
+          description: "Lookback window in days (default 90, max 730).",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+    },
+  },
+
+  {
+    name: "db_config_audit_search",
+    description:
+      "Search configuration change history across both audit trails: `versions` (the coadmin Rails " +
+      "back office — Cotribute sysadmins) and `financial_user_audit_logs` (the boa-settings portal — " +
+      "both Cotribute staff and FI staff). Answers 'what config changed for this FI last quarter', " +
+      "'what has this person been changing', and the cross-product of the two. " +
+      "Rows are collapsed into edit SESSIONS — PaperTrail writes one row per save, so a single editing " +
+      "session routinely produces 7+ near-identical rows; counts are reported in sessions with row " +
+      "counts secondary. " +
+      "Results carry only WHICH fields changed, never the before/after values — call " +
+      "db_config_audit_detail with a `detail_ids` value for one specific change. " +
+      "Application-level types (OnboardingApplication, FinancialUser, FinancialUserRole) are excluded " +
+      "unless named explicitly in `item_types`: an applicant editing their own application is not a " +
+      "config change, and those payloads carry PII. " +
+      "Do NOT try to reach this data through `legacy_model_versions` — that table is 4.8M rows of legacy " +
+      "WeServe runtime records (Pulse, EmailMetric, Token) and holds no Acquire configuration. " +
+      "Coverage floors: the internal trail starts 2024-02-20, the portal trail 2024-06-14; earlier " +
+      "windows return nothing because nothing was recorded, not because nothing changed. Defaults to prod.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        actor_query: {
+          type: "string",
+          description:
+            "Who made the change. An email is exact; a name fragment, admins.id or financial_users.id also work. Resolve names via db_audit_actors first.",
+        },
+        fi_query: {
+          type: "string",
+          description:
+            "Financial institution name fragment, slug, or uuid. Ambiguous matches return { ambiguous: true, candidates: [...] }.",
+        },
+        item_types: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            'Restrict to these item types, e.g. ["Flow","DecisionRule","CoreBankingConfiguration"]. Naming an application-level type here overrides the default exclusion.',
+        },
+        events: {
+          type: "array",
+          items: { type: "string", enum: ["create", "update", "destroy"] },
+          description: "Restrict to these events.",
+        },
+        start_date: {
+          type: "string",
+          description: "Window start, YYYY-MM-DD (inclusive).",
+        },
+        end_date: {
+          type: "string",
+          description: "Window end, YYYY-MM-DD (exclusive).",
+        },
+        trail: {
+          type: "string",
+          enum: ["both", "internal", "portal"],
+          description:
+            "internal = coadmin back office (Cotribute only); portal = boa-settings (Cotribute + FI staff). Default both.",
+        },
+        limit: {
+          type: "number",
+          description:
+            "Max sessions returned (default 50, max 200). Rollups always cover the whole window.",
+        },
+        session_gap_minutes: {
+          type: "number",
+          description: "Idle gap that starts a new edit session (default 30).",
+        },
+        include_diagnostics: {
+          type: "boolean",
+          description:
+            "Include per-item_type FI-attribution coverage. Use when FI counts look wrong.",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: ["start_date", "end_date"],
+    },
+  },
+
+  {
+    name: "db_config_audit_detail",
+    description:
+      "Show what actually changed in ONE audit row. Take `trail` and an id from a " +
+      "db_config_audit_search session's `detail_ids`. " +
+      "Default mode 'structural' lists the changed JSON paths with no values — this is the only safe " +
+      "way to read a Flow or CoreBankingConfiguration diff, which can exceed 200KB. " +
+      "Mode 'values' returns redacted, size-capped before/after pairs; it is downgraded to structural " +
+      "for PII-bearing item types, and for large config types unless `keys` narrows to 3 or fewer. " +
+      "Values are redacted, never decrypted. Defaults to prod.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        trail: {
+          type: "string",
+          enum: ["internal", "portal"],
+          description:
+            "Which trail the id belongs to. Required — the two id spaces are separate and overlap numerically.",
+        },
+        id: {
+          type: "number",
+          description:
+            "versions.id or financial_user_audit_logs.id, from `detail_ids`.",
+        },
+        keys: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Only these top-level keys. Narrowing to 3 or fewer also unlocks values mode on large config types.",
+        },
+        mode: {
+          type: "string",
+          enum: ["structural", "values"],
+          description: "Default structural (paths only, no values).",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: ["trail", "id"],
+    },
+  },
 ];
