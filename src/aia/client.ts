@@ -51,9 +51,26 @@ const CAP_NOTE =
 const ELIDE_NOTE =
   "Payload capped to protect context; largest sections elided — fetch them individually via aia_get_institution_section.";
 
-// Elide the largest top-level values of an object until it fits under MAX_BYTES,
-// keeping the small fields (e.g. a bundle's profile) intact. Returns the capped
-// object plus the names of the elided keys.
+const TOO_LARGE_NOTE =
+  "Response exceeded the size cap and was withheld — narrow filters, page with cursor, or fetch individual slices via aia_get_institution_section.";
+
+// Last-resort marker when a payload can't be brought under the ceiling by
+// slicing/eliding. Guarantees capPayload never returns something oversized.
+function tooLargeMarker(bytes: number, meta?: any): any {
+  const out: any = {
+    data: null,
+    truncated: true,
+    truncation_note: TOO_LARGE_NOTE,
+    approx_bytes: bytes,
+  };
+  if (meta !== undefined) out.meta = meta;
+  return out;
+}
+
+// Elide the largest top-level values of a (plain, non-array) object until it fits
+// under MAX_BYTES, keeping the small fields (e.g. a bundle's profile) intact.
+// Only elides a value when the stub is actually smaller than it — otherwise the
+// replacement would inflate the payload rather than shrink it.
 function elideObject(obj: Record<string, any>): {
   value: Record<string, any>;
   elided: string[];
@@ -65,17 +82,22 @@ function elideObject(obj: Record<string, any>): {
     .sort((a, b) => b.size - a.size);
   for (const { k, size } of ranked) {
     if (jsonLen(value) <= MAX_BYTES) break;
-    value[k] = { elided: true, approx_bytes: size };
+    const stub = { elided: true, approx_bytes: size };
+    if (size <= jsonLen(stub)) continue; // eliding wouldn't shrink it — skip
+    value[k] = stub;
     elided.push(k);
   }
   return { value, elided };
 }
 
 // Cap any payload so one call can't blow the context window:
-//  - array: slice to the row/byte ceiling; a lone oversized row is elided in place.
+//  - array: slice to the row/byte ceiling; a lone oversized plain-object row is
+//    elided in place.
 //  - object: byte-cap by eliding the largest top-level sub-payloads (the bundle
 //    endpoint returns an object, so it would otherwise bypass the cap entirely).
-// Truncation is always flagged so the model pages/fetches deliberately.
+//  - anything still over the ceiling (arrays-as-rows, lone huge primitives,
+//    objects of many tiny keys) hits the backstop and is withheld wholesale.
+// The result is GUARANTEED to serialize under MAX_BYTES; truncation is flagged.
 function capPayload(data: any, meta?: any): any {
   const wrap = (value: any, extra?: Record<string, any>) => {
     const out: any = { data: value, ...extra };
@@ -83,6 +105,7 @@ function capPayload(data: any, meta?: any): any {
     return out;
   };
 
+  let result: any;
   if (Array.isArray(data)) {
     let rows = data;
     let truncated = rows.length > MAX_ROWS;
@@ -91,13 +114,14 @@ function capPayload(data: any, meta?: any): any {
       rows = rows.slice(0, Math.ceil(rows.length / 2));
       truncated = true;
     }
-    // A single row can still exceed the byte ceiling; elide within it so the
-    // model gets a bounded, flagged response rather than silently huge output.
+    // A lone plain-object row can still exceed the ceiling; elide within it.
+    // Array-valued or primitive lone rows are left for the backstop below.
     let elided: string[] | undefined;
     if (
       rows.length === 1 &&
       rows[0] &&
       typeof rows[0] === "object" &&
+      !Array.isArray(rows[0]) &&
       jsonLen(rows) > MAX_BYTES
     ) {
       const capped = elideObject(rows[0]);
@@ -105,24 +129,34 @@ function capPayload(data: any, meta?: any): any {
       elided = capped.elided;
       truncated = true;
     }
-    if (!truncated) return wrap(rows, { returned: rows.length });
-    return wrap(rows, {
-      returned: rows.length,
-      truncated: true,
-      truncation_note: elided ? ELIDE_NOTE : CAP_NOTE,
-      ...(elided ? { elided } : {}),
-    });
-  }
-
-  if (data && typeof data === "object" && jsonLen(data) > MAX_BYTES) {
+    result = truncated
+      ? wrap(rows, {
+          returned: rows.length,
+          truncated: true,
+          truncation_note: elided ? ELIDE_NOTE : CAP_NOTE,
+          ...(elided ? { elided } : {}),
+        })
+      : wrap(rows, { returned: rows.length });
+  } else if (
+    data &&
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    jsonLen(data) > MAX_BYTES
+  ) {
     const { value, elided } = elideObject(data);
     const extra = { truncated: true, elided, truncation_note: ELIDE_NOTE };
-    return meta !== undefined
-      ? { data: value, meta, ...extra }
-      : { ...value, ...extra };
+    result =
+      meta !== undefined
+        ? { data: value, meta, ...extra }
+        : { ...value, ...extra };
+  } else {
+    result = meta !== undefined ? { data, meta } : data;
   }
 
-  return meta !== undefined ? { data, meta } : data;
+  // Invariant backstop: whatever the shape, never hand back something over the
+  // ceiling. If slicing/eliding didn't get it under, withhold it wholesale.
+  const size = jsonLen(result);
+  return size > MAX_BYTES ? tooLargeMarker(size, meta) : result;
 }
 
 // AIA error convention: { error: { code, message } }. Surface it verbatim and
