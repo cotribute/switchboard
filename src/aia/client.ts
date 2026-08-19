@@ -12,6 +12,14 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // every AIA tool) so the ceiling holds no matter what limit a tool passes.
 const MAX_ROWS = 200;
 const MAX_BYTES = 100_000;
+// Shrink to below this internal target, not MAX_BYTES, so there's headroom for the
+// response wrapper (truncation_note + elided list + meta). Without the reserve, the
+// wrapper can push an elided bundle back over the ceiling and trip the backstop,
+// withholding it wholesale — losing even the profile the eliding meant to keep.
+const SHRINK_TARGET = MAX_BYTES - 8_000;
+// Cap how many elided key names we echo, so the `elided` list can't itself become
+// the thing that blows the wrapper past MAX_BYTES on a very wide object.
+const MAX_ELIDED_NAMES = 100;
 
 // Retry transient failures: 429, 5xx gateway errors, and network/timeouts
 // (no HTTP response at all — e.g. ECONNABORTED).
@@ -81,10 +89,13 @@ function tooLargeMarker(bytes: number, meta?: any): any {
 }
 
 // Elide the largest top-level values of a (plain, non-array) object until it fits
-// under MAX_BYTES, keeping the small fields (e.g. a bundle's profile) intact.
-// Only elides a value when the stub is actually smaller than it — otherwise the
+// under `target`, keeping the small fields (e.g. a bundle's profile) intact. Only
+// elides a value when the stub is actually smaller than it — otherwise the
 // replacement would inflate the payload rather than shrink it.
-function elideObject(obj: Record<string, any>): {
+function elideObject(
+  obj: Record<string, any>,
+  target: number
+): {
   value: Record<string, any>;
   elided: string[];
 } {
@@ -93,13 +104,15 @@ function elideObject(obj: Record<string, any>): {
   const ranked = Object.keys(value)
     .map((k) => ({ k, size: jsonLen(value[k]) }))
     .sort((a, b) => b.size - a.size);
-  // Track the total with a running count instead of re-serializing the whole
-  // object every iteration (that was O(n²) on objects with many keys). Replacing
-  // a value with its stub changes the serialized length by exactly stub−size
-  // (key name and punctuation are unchanged), so this stays exact.
+  // Running count instead of re-serializing the whole object each iteration (that
+  // was O(n²) on objects with many keys). The per-elision delta is close to
+  // stub−size but not exact under indentation — a nested value carries extra
+  // per-line indent the standalone measure omits — so `total` reads slightly
+  // optimistic. That's why we aim at `target` (< MAX_BYTES) and let the backstop
+  // in capPayload enforce the hard ceiling.
   let total = jsonLen(value);
   for (const { k, size } of ranked) {
-    if (total <= MAX_BYTES) break;
+    if (total <= target) break;
     const stubSize = jsonLen({ elided: true, approx_bytes: size });
     // ranked is descending: once a value is too small for the stub to shrink,
     // every remaining value is too — stop rather than scanning them all.
@@ -109,6 +122,16 @@ function elideObject(obj: Record<string, any>): {
     total -= size - stubSize;
   }
   return { value, elided };
+}
+
+// Response fields describing an elision, with the name list bounded so it can't
+// itself bloat the wrapper past the cap.
+function elidedFields(elided: string[]): Record<string, any> {
+  if (elided.length === 0) return {};
+  return {
+    elided: elided.slice(0, MAX_ELIDED_NAMES),
+    elided_count: elided.length,
+  };
 }
 
 // Cap any payload so one call can't blow the context window:
@@ -131,8 +154,11 @@ function capPayload(data: any, meta?: any): any {
     let rows = data;
     let truncated = rows.length > MAX_ROWS;
     if (truncated) rows = rows.slice(0, MAX_ROWS);
-    while (rows.length > 1 && jsonLen(rows) > MAX_BYTES) {
-      rows = rows.slice(0, Math.ceil(rows.length / 2));
+    // Over the ceiling → halve down to the target (with wrapper headroom).
+    if (jsonLen(rows) > MAX_BYTES) {
+      while (rows.length > 1 && jsonLen(rows) > SHRINK_TARGET) {
+        rows = rows.slice(0, Math.ceil(rows.length / 2));
+      }
       truncated = true;
     }
     // A lone plain-object row can still exceed the ceiling; elide within it.
@@ -145,7 +171,7 @@ function capPayload(data: any, meta?: any): any {
       !Array.isArray(rows[0]) &&
       jsonLen(rows) > MAX_BYTES
     ) {
-      const capped = elideObject(rows[0]);
+      const capped = elideObject(rows[0], SHRINK_TARGET);
       rows = [capped.value];
       elided = capped.elided;
       truncated = true;
@@ -155,7 +181,7 @@ function capPayload(data: any, meta?: any): any {
           returned: rows.length,
           truncated: true,
           truncation_note: elided ? ELIDE_NOTE : CAP_NOTE,
-          ...(elided ? { elided } : {}),
+          ...(elided ? elidedFields(elided) : {}),
         })
       : wrap(rows, { returned: rows.length });
   } else if (
@@ -164,8 +190,12 @@ function capPayload(data: any, meta?: any): any {
     !Array.isArray(data) &&
     jsonLen(data) > MAX_BYTES
   ) {
-    const { value, elided } = elideObject(data);
-    const extra = { truncated: true, elided, truncation_note: ELIDE_NOTE };
+    const { value, elided } = elideObject(data, SHRINK_TARGET);
+    const extra = {
+      truncated: true,
+      ...elidedFields(elided),
+      truncation_note: ELIDE_NOTE,
+    };
     result =
       meta !== undefined
         ? { data: value, meta, ...extra }
