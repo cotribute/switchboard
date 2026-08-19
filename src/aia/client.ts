@@ -16,6 +16,10 @@ const MAX_BYTES = 100_000;
 // Retry transient failures: 429, 5xx gateway errors, and network/timeouts
 // (no HTTP response at all — e.g. ECONNABORTED).
 function isRetryable(error: any): boolean {
+  // AIA's structured { error } arrives on an HTTP 200, so it has no `.response`
+  // — but it's a deterministic caller error that will never succeed on retry.
+  // Tagged by aiaError(); never retry it (would otherwise look like a network error).
+  if (error?.isAiaError) return false;
   const status = error?.response?.status;
   if (status === 429 || RETRYABLE_STATUS.has(status)) return true;
   return !error?.response; // network error / timeout
@@ -34,28 +38,79 @@ function retryDelayMs(error: any, attempt: number): number {
   return RETRY_DELAYS_MS[attempt];
 }
 
-// Cap an array payload: slice to the row/byte ceiling and flag truncation so the
-// model pages deliberately (cursor) rather than being handed everything at once.
+const jsonLen = (v: any): number => {
+  try {
+    return JSON.stringify(v)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+};
+
+// Cap any payload so one call can't blow the context window:
+//  - array: slice to the row/byte ceiling (list endpoints).
+//  - object: byte-cap by eliding the largest top-level sub-payloads (the bundle
+//    endpoint returns an object, so it would otherwise bypass the cap entirely).
+// Truncation is always flagged so the model pages/fetches deliberately.
 function capPayload(data: any, meta?: any): any {
-  if (!Array.isArray(data)) return meta !== undefined ? { data, meta } : data;
-  let rows = data;
-  let truncated = false;
-  if (rows.length > MAX_ROWS) {
-    rows = rows.slice(0, MAX_ROWS);
-    truncated = true;
+  const wrap = (value: any, extra?: Record<string, any>) => {
+    const out: any = { data: value, ...extra };
+    if (meta !== undefined) out.meta = meta;
+    return out;
+  };
+
+  if (Array.isArray(data)) {
+    let rows = data;
+    let truncated = rows.length > MAX_ROWS;
+    if (truncated) rows = rows.slice(0, MAX_ROWS);
+    while (rows.length > 1 && jsonLen(rows) > MAX_BYTES) {
+      rows = rows.slice(0, Math.ceil(rows.length / 2));
+      truncated = true;
+    }
+    return wrap(
+      rows,
+      truncated
+        ? {
+            returned: rows.length,
+            truncated: true,
+            truncation_note:
+              "Response capped to protect context. Narrow filters or page with cursor for more.",
+          }
+        : { returned: rows.length }
+    );
   }
-  while (rows.length > 1 && JSON.stringify(rows).length > MAX_BYTES) {
-    rows = rows.slice(0, Math.ceil(rows.length / 2));
-    truncated = true;
+
+  if (data && typeof data === "object" && jsonLen(data) > MAX_BYTES) {
+    // Elide the largest top-level values (e.g. a bundle's heaviest research
+    // payloads) until under the byte ceiling; keep profile/small fields intact.
+    const capped: Record<string, any> = { ...data };
+    const elided: string[] = [];
+    const ranked = Object.keys(capped)
+      .map((k) => ({ k, size: jsonLen(capped[k]) }))
+      .sort((a, b) => b.size - a.size);
+    for (const { k, size } of ranked) {
+      if (jsonLen(capped) <= MAX_BYTES) break;
+      capped[k] = { elided: true, approx_bytes: size };
+      elided.push(k);
+    }
+    return meta !== undefined
+      ? {
+          data: capped,
+          meta,
+          truncated: true,
+          elided,
+          truncation_note:
+            "Payload capped to protect context; largest sections elided — fetch them individually via aia_get_institution_section.",
+        }
+      : {
+          ...capped,
+          truncated: true,
+          elided,
+          truncation_note:
+            "Payload capped to protect context; largest sections elided — fetch them individually via aia_get_institution_section.",
+        };
   }
-  const out: any = { data: rows, returned: rows.length };
-  if (meta !== undefined) out.meta = meta;
-  if (truncated) {
-    out.truncated = true;
-    out.truncation_note =
-      "Response capped to protect context. Narrow filters or page with cursor for more.";
-  }
-  return out;
+
+  return meta !== undefined ? { data, meta } : data;
 }
 
 // AIA error convention: { error: { code, message } }. Surface it verbatim and
@@ -64,9 +119,11 @@ function capPayload(data: any, meta?: any): any {
 function aiaError(body: any): Error | null {
   if (body && typeof body === "object" && body.error) {
     const { code, message } = body.error;
-    return new Error(
+    const err: any = new Error(
       [code, message].filter(Boolean).join(" — ") || "AIA request failed"
     );
+    err.isAiaError = true; // deterministic API error — non-retryable (see isRetryable)
+    return err;
   }
   return null;
 }
