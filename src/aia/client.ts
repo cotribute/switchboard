@@ -63,7 +63,15 @@ function tooLargeMarker(bytes: number, meta?: any): any {
     truncation_note: TOO_LARGE_NOTE,
     approx_bytes: bytes,
   };
-  if (meta !== undefined) out.meta = meta;
+  // Keep meta (pagination cursors) only if it fits — a pathologically large meta
+  // must not push the withhold-marker itself back over the ceiling.
+  if (meta !== undefined) {
+    out.meta = meta;
+    if (jsonLen(out) > MAX_BYTES) {
+      delete out.meta;
+      out.meta_omitted = true;
+    }
+  }
   return out;
 }
 
@@ -80,12 +88,20 @@ function elideObject(obj: Record<string, any>): {
   const ranked = Object.keys(value)
     .map((k) => ({ k, size: jsonLen(value[k]) }))
     .sort((a, b) => b.size - a.size);
+  // Track the total with a running count instead of re-serializing the whole
+  // object every iteration (that was O(n²) on objects with many keys). Replacing
+  // a value with its stub changes the serialized length by exactly stub−size
+  // (key name and punctuation are unchanged), so this stays exact.
+  let total = jsonLen(value);
   for (const { k, size } of ranked) {
-    if (jsonLen(value) <= MAX_BYTES) break;
-    const stub = { elided: true, approx_bytes: size };
-    if (size <= jsonLen(stub)) continue; // eliding wouldn't shrink it — skip
-    value[k] = stub;
+    if (total <= MAX_BYTES) break;
+    const stubSize = jsonLen({ elided: true, approx_bytes: size });
+    // ranked is descending: once a value is too small for the stub to shrink,
+    // every remaining value is too — stop rather than scanning them all.
+    if (size <= stubSize) break;
+    value[k] = { elided: true, approx_bytes: size };
     elided.push(k);
+    total -= size - stubSize;
   }
   return { value, elided };
 }
@@ -181,8 +197,9 @@ function aiaError(body: any): Error | null {
  *    an error (never the key, never an axios stack);
  *  - retries transient failures (429, 502/503/504, network/timeout) with backoff,
  *    honoring `Retry-After` when present;
- *  - returns `data` (plus `meta` when paginated), capping oversized array
- *    payloads with a `truncated` flag so one call can't blow the context window.
+ *  - returns `data` (plus `meta` when paginated), capping oversized payloads
+ *    (arrays and objects alike) with a `truncated` flag — guaranteed to serialize
+ *    under MAX_BYTES so one call can't blow the context window.
  */
 export async function aiaGet(
   axiosInstance: AxiosInstance,
