@@ -70,7 +70,7 @@ The Switchboard `/github/mcp` is scoped to the Cotribute monorepo (bot PAT, defa
 Tool ownership across the four CX support endpoints is disjoint by construction — there's exactly one tool per data type:
 
 - **coadmin-api** owns everything app-scoped that touches encrypted columns: decision-status logs, API request logs, core-banking logs, FIS GKYC, financial email logs. It also owns the plaintext things it covers (effectiv, Plaid IDV, Repay payments).
-- **heroku-postgres** owns what coadmin doesn't expose: entry-point lookup (financial_users / onboarding_applications / FIs); config tables (flows + their action/transform/routing/offer/prefill internals, decision_statuses + decision_rules, FI products, share_categories/products, financial_application_mapping_templates, core_banking_configurations); transaction snapshots (financial_applications, fraud results + reasons, OFAC watchlist, credit report metadata + corelation pulls, business verification (Middesk + FIS product), Vouched IDV, Stripe payments, OTP / Twilio); plus a small legacy bridge (organizations.meta lookup, submissions → onboarding_applications resolution); plus one Cowork-skill battery (`db_business_outcomes_battery`) that bundles 10 aggregate queries for the `/generate-business-outcomes` skill into a single round-trip — see `skills/generate-business-outcomes/SKILL.md` and `src/heroku-postgres/business-outcomes-sql.ts`. plus one CSV-export tool (`db_list_customer_users`) backing the `/list-customer-users` skill, which returns the Customer.io-import-ready list of FI staff/portal users (financial_users holding >=1 role) as final CSV text rather than row objects — see `skills/list-customer-users/SKILL.md` and `src/heroku-postgres/customer-users-sql.ts`. Skills under `skills/` follow Anthropic's standard layout (one directory per skill, `SKILL.md` inside, YAML frontmatter required).
+- **heroku-postgres** owns what coadmin doesn't expose: entry-point lookup (financial_users / onboarding_applications / FIs); config tables (flows + their action/transform/routing/offer/prefill internals, decision_statuses + decision_rules, FI products, share_categories/products, financial_application_mapping_templates, core_banking_configurations); transaction snapshots (financial_applications, fraud results + reasons, OFAC watchlist, credit report metadata + corelation pulls, business verification (Middesk + FIS product), Vouched IDV, Stripe payments, OTP / Twilio); plus a small legacy bridge (organizations.meta lookup, submissions → onboarding_applications resolution); plus one Cowork-skill battery (`db_business_outcomes_battery`) that bundles 10 aggregate queries for the `/generate-business-outcomes` skill into a single round-trip — see `skills/generate-business-outcomes/SKILL.md` and `src/heroku-postgres/business-outcomes-sql.ts`; plus one CSV-export tool (`db_list_customer_users`) backing the `/list-customer-users` skill, which returns the Customer.io-import-ready list of FI staff/portal users (financial_users holding >=1 role) as final CSV text rather than row objects — see `skills/list-customer-users/SKILL.md` and `src/heroku-postgres/customer-users-sql.ts`.
 
 It also owns **config-change history** (`db_audit_actors`, `db_config_audit_search`,
 `db_config_audit_detail`) over the two audit trails: `versions` (PaperTrail, written by
@@ -95,6 +95,22 @@ the integer-PK legacy WeServe models (Pulse, EmailMetric, Token, Bucket) — 4.8
 runtime data and zero Acquire config.
 
 Transaction tools default to `env: "prod"`; config tools default to `env: "sandbox"` (clients build and test config there before promoting). DB pools are module-level singletons in `index.ts` — shared across MCP sessions for the lifetime of the dyno.
+
+## Skills
+
+`skills/` holds the Cowork skills that use these endpoints. Anthropic's standard layout, one directory per skill: `skills/<name>/SKILL.md`, YAML frontmatter with `name` (matching the directory) and `description` required, supporting files (`assets/`, `evals/`) alongside.
+
+| Skill | Backed by | What it produces |
+| --- | --- | --- |
+| `generate-business-outcomes` | `db_business_outcomes_battery` | Per-FI business-outcomes markdown → `.docx` |
+| `generate-fgp-utilization` | `db_fgp_utilization_battery` | FraudGuard+ billable-inquiry workbook (`.xlsx`) for finance |
+| `list-customer-users` | `db_list_customer_users` | Customer.io-import-ready CSV of FI staff / portal users |
+| `help` | frontapp + heroku-postgres + coadmin-api + papertrail + github | Support triage: internal diagnosis + drafted customer reply |
+| `cotribute-brand` | none — assets only | Brand rules + logo files for on-brand deliverables |
+
+Most skills are 1 skill ↔ 1 battery tool, one round-trip. Two are not: `help` spans five scopes (a session needs each connector it reaches for), and `cotribute-brand` calls no tool at all — it ships the logo set in `assets/logos/` and the palette/typography rules.
+
+Skills are distributed as `.skill` bundles (zip archives of the same directory). **The unpacked directory is the source of truth here** — `*.skill` is gitignored so a downloaded bundle can't land in the tree as an opaque binary. To publish, re-zip the directory; to adopt an updated bundle, unpack it over the directory and commit the diff.
 
 ## Adding a New Tool
 

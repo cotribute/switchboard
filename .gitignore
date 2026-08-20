@@ -17,3 +17,6 @@ coverage
 
 # Local verification scripts
 scratch/
+
+# Packaged skill bundles — the unpacked skills/<name>/ directory is the source of truth
+*.skill
