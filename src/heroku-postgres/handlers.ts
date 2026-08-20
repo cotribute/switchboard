@@ -21,6 +21,16 @@ import {
   SQL_FGP_SESSIONS_EXISTS,
 } from "./fgp-utilization-sql.js";
 import {
+  SQL_CUSTOMER_USERS,
+  SQL_KNOWN_ROLE_NAMES,
+} from "./customer-users-sql.js";
+import {
+  CUSTOMER_USER_COLUMNS,
+  CustomerUserRow,
+  dedupeByEmail,
+  toCsv,
+} from "./customer-users.js";
+import {
   computeFgpUtilization,
   EffectivCandidate,
   PlaidCandidate,
@@ -234,6 +244,128 @@ export function createHandlers(
         [args.user_id]
       );
       return { otp_codes: otp.rows, twilio_verifications: twilio.rows };
+    },
+
+    db_list_customer_users: async (args) => {
+      const p = pool(args.env, "prod");
+
+      let fi: any = null;
+      if (args.fi_query) {
+        const resolved = await resolveFi(p, String(args.fi_query));
+        // Pass the not-found / ambiguous shapes straight through.
+        if (!("fi" in resolved)) return resolved;
+        fi = resolved.fi;
+      }
+
+      let roles: string[] | null = null;
+      if (args.roles !== undefined && args.roles !== null) {
+        if (!Array.isArray(args.roles)) {
+          return {
+            ok: false,
+            error: "`roles` must be an array of role names.",
+          };
+        }
+        roles = args.roles
+          .map((r: unknown) => String(r).trim())
+          .filter(Boolean);
+        if (roles.length === 0) roles = null;
+      }
+      if (roles) {
+        // Reject typos loudly — an unknown role name would otherwise return an
+        // empty list that reads as "nobody has this role".
+        const known = (await p.query(SQL_KNOWN_ROLE_NAMES)).rows.map(
+          (r: any) => r.name
+        );
+        const unknown = roles.filter((r) => !known.includes(r));
+        if (unknown.length) {
+          return {
+            ok: false,
+            error: `Unknown role name(s): ${unknown.join(", ")}. Known roles: ${known.join(", ")}.`,
+          };
+        }
+      }
+
+      const verifiedOnly = args.verified_only === true;
+      const excludeInternal = args.exclude_internal === true;
+      const dedupe = args.dedupe_by_email === true;
+      // No limit unless asked; MAX_CUSTOMER_USER_ROWS is the backstop below.
+      const limit =
+        args.limit === undefined || args.limit === null
+          ? null
+          : clampInt(
+              args.limit,
+              MAX_CUSTOMER_USER_ROWS,
+              1,
+              MAX_CUSTOMER_USER_ROWS
+            );
+
+      const { rows } = await p.query(SQL_CUSTOMER_USERS, [
+        fi?.id ?? null,
+        roles,
+        verifiedOnly,
+        excludeInternal,
+        // Fetch one past the cap when unlimited, so truncation is detectable.
+        limit ?? MAX_CUSTOMER_USER_ROWS + 1,
+      ]);
+
+      // The role predicate normally holds this to ~1.4k rows out of 433k
+      // financial_users. If it ever stops doing so, truncate rather than hand
+      // the model a context-blowing payload.
+      let truncated = rows.length > MAX_CUSTOMER_USER_ROWS;
+      let kept: CustomerUserRow[] = truncated
+        ? rows.slice(0, MAX_CUSTOMER_USER_ROWS)
+        : rows;
+
+      if (dedupe) kept = dedupeByEmail(kept);
+
+      const build = (list: CustomerUserRow[], wasTruncated: boolean) => {
+        const byFi = new Map<string, number>();
+        for (const r of list) {
+          // A deduped row can span FIs (slug list) — count it under each.
+          for (const slug of (r.fi_slug ?? "(none)").split(";")) {
+            byFi.set(slug, (byFi.get(slug) ?? 0) + 1);
+          }
+        }
+        const result: Record<string, unknown> = {
+          ok: true,
+          generated_at: new Date().toISOString().slice(0, 10),
+          fi: fi ? { id: fi.id, name: fi.name, slug: fi.slug } : null,
+          filters_applied: {
+            fi_query: args.fi_query ?? null,
+            roles,
+            verified_only: verifiedOnly,
+            exclude_internal: excludeInternal,
+            dedupe_by_email: dedupe,
+            limit,
+          },
+          total: list.length,
+          columns: CUSTOMER_USER_COLUMNS,
+          by_fi: [...byFi.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([fi_slug, users]) => ({ fi_slug, users })),
+          rows_csv: toCsv(CUSTOMER_USER_COLUMNS, list as any),
+          truncated: wasTruncated,
+        };
+        if (wasTruncated) {
+          result.note =
+            `Truncated to ${list.length} rows. Narrow with fi_query or roles, ` +
+            `or pass a smaller limit, to get a complete list.`;
+        }
+        return result;
+      };
+
+      // Measure the pretty-printed size, because that is exactly what
+      // server.ts sends to the model (JSON.stringify(result, null, 2)).
+      let result = build(kept, truncated);
+      while (
+        kept.length > 1 &&
+        JSON.stringify(result, null, 2).length > MAX_CUSTOMER_USER_BYTES
+      ) {
+        kept = kept.slice(0, Math.floor(kept.length / 2));
+        truncated = true;
+        result = build(kept, truncated);
+      }
+      return result;
     },
 
     // ── Config tools (default env: "sandbox") ────────────────────────────
@@ -1476,6 +1608,14 @@ function scopedParams(opts: {
     opts.excluded ?? null,
   ];
 }
+
+// Backstops for db_list_customer_users. The role predicate holds the real list
+// to ~1.4k rows, but financial_users has 433k rows total, so a schema change or
+// a bad edit to the predicate must not be able to dump the table into the model
+// context. MAX_CUSTOMER_USER_BYTES is measured against the pretty-printed JSON
+// server.ts actually sends (see the same reasoning in src/aia/client.ts).
+const MAX_CUSTOMER_USER_ROWS = 20000;
+const MAX_CUSTOMER_USER_BYTES = 400_000;
 
 function clampInt(
   value: unknown,

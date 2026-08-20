@@ -141,6 +141,60 @@ export const tools = [
     },
   },
 
+  {
+    name: "db_list_customer_users",
+    description:
+      "List customer users — financial_users rows holding at least one role, i.e. FI staff / portal users, NOT applicants. " +
+      "Returns a Customer.io-import-ready CSV string in `rows_csv` (id = CIO identifier; email/first_name/last_name = standard attributes; fi_slug/fi_name/roles = segmentation attributes) plus a `total` and a per-FI count. " +
+      "Write `rows_csv` to a .csv file verbatim — it is already final RFC-4180 CSV, so re-encoding it can only corrupt it. " +
+      "With no arguments it returns the RAW list: every role-holder at every FI, including internal @cotribute accounts and unverified logins, with no dedupe. " +
+      "`exclude_internal`, `verified_only` and `dedupe_by_email` are opt-in — say what you are filtering rather than applying them silently. " +
+      "If `fi_query` matches several FIs the response is { ambiguous: true, candidates: [...] }; if it matches none, { ok: false, error }. " +
+      "Defaults to prod.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fi_query: {
+          type: "string",
+          description:
+            "Scope to one financial institution — name fragment, slug, or uuid. Omit for all FIs.",
+        },
+        roles: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            'Only users holding one of these roles. Values in use today: "portalUser", "portalAdmin", "analyst". Omit for all roles.',
+        },
+        verified_only: {
+          type: "boolean",
+          description:
+            "Only users whose login is verified (login_verified = true). Default false.",
+        },
+        exclude_internal: {
+          type: "boolean",
+          description:
+            "Drop internal Cotribute staff accounts (login_id matching @cotribute*). Default false.",
+        },
+        dedupe_by_email: {
+          type: "boolean",
+          description:
+            "One row per email address; a person holding accounts at several FIs is folded into one row with the FIs and roles rolled up. Default false.",
+        },
+        limit: {
+          type: "number",
+          description:
+            "Cap the number of rows returned (1-20000). Omit for the full list.",
+        },
+        env: {
+          type: "string",
+          enum: ["prod", "sandbox"],
+          description: "Database environment (default: prod)",
+        },
+      },
+      required: [],
+    },
+  },
+
   // ── Config tools (default env: "sandbox") ────────────────────────────────
 
   {
