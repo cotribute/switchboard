@@ -1,0 +1,23 @@
+{
+  "skill_name": "cotribute-support-investigation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Investigate Front ticket cnv_1gy0pac2 (SR-11888): '[PRODUCTION] CORE_BANKING_APPLICATION_PROCESSING_FAILURE --> Update Person Address Link privilege is denied --> 2026-05-19 13:21'. Pull all relevant logs and application data, diagnose what happened, and produce an internal summary plus a draft reply.",
+      "expected_output": "Internal summary identifying the application, the specific core banking error (Update Person Address Link privilege denied), root cause analysis (likely a permissions/privilege issue with the core banking adapter), evidence from logs, recommended next steps. Plus a concise B2B reply draft.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Investigate Front ticket cnv_1gxy4sr6 (SR-11880): 'Decision Rule Clarification - Youth Applications' from Jeremy Ackerley at First Capital FCU. Pull their decision rules and flow config and explain what's happening with youth applicants.",
+      "expected_output": "FI lookup for First Capital FCU, flow config and decision rules retrieved, explanation of what the current rules do for youth applicants (age conditions, eligibility rules), any config gap or clarification needed. Reply draft to Jeremy at the FI.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Investigate Front ticket cnv_1gxyjzki (SR-11883): 'Emails going to Spam - You've Received a Message' from contact@example.com. Figure out what's going on with the emails and draft a response.",
+      "expected_output": "Investigation of the email deliverability issue — check Customer.io activity for the relevant email address/FI, check platform email logs, identify whether this is a deliverability/spam filter issue or a platform sending problem. Draft a helpful reply to the FI contact.",
+      "files": []
+    }
+  ]
+}
