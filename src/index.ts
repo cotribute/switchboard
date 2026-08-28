@@ -49,6 +49,10 @@ const acquireApiClientId = process.env.ACQUIRE_API_CLIENT_ID;
 const papertrailToken = process.env.PAPERTRAIL_API_TOKEN;
 const githubToken = process.env.GITHUB_TOKEN;
 
+// Optional website analytics — the Supabase project shared by contribute-3.0
+// (the public site) and webmaster (the admin portal)
+const websiteDbUrl = process.env.WEBSITE_DB_URL;
+
 // Optional AIA (AI Institution Advisor) — internal-only, one unscoped key
 const aiaApiKey = process.env.AIA_API_KEY;
 const aiaBaseUrl = process.env.AIA_BASE_URL;
@@ -67,6 +71,13 @@ const prodDbPool = claudeDbUrl
 const uatDbPool = claudeUatDbUrl
   ? new Pool({
       connectionString: claudeUatDbUrl,
+      ssl: { rejectUnauthorized: false },
+      max: 3,
+    })
+  : null;
+const websiteDbPool = websiteDbUrl
+  ? new Pool({
+      connectionString: websiteDbUrl,
       ssl: { rejectUnauthorized: false },
       max: 3,
     })
@@ -134,6 +145,7 @@ function createMcpHandler(scope: ModuleScope) {
         coadminApiCreds,
         papertrailToken,
         githubToken,
+        websiteDbPool,
         aiaApiKey,
         aiaBaseUrl,
         aiaEnableOps,
@@ -184,6 +196,8 @@ const moduleEndpoints: ModuleScope[] = [
   "coadmin-api",
   "papertrail",
   "github",
+  // GTM team
+  "website",
   // Internal research (unscoped, cross-org)
   "aia",
 ];
@@ -206,6 +220,7 @@ app.listen(port, () => {
   if (coadminApiBaseUrl && coadminApiCreds) services.push("coadmin-api");
   if (papertrailToken) services.push("Papertrail");
   if (githubToken) services.push("GitHub");
+  if (websiteDbPool) services.push("Website Analytics");
   if (aiaApiKey) services.push("AIA");
   console.log(
     `Switchboard MCP server listening on port ${port} (${services.join(" + ")})`

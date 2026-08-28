@@ -31,6 +31,7 @@
     "src/coadmin-api/**/*.ts",
     "src/papertrail/**/*.ts",
     "src/github/**/*.ts",
+    "src/website/**/*.ts",
     "src/aia/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
