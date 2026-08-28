@@ -28,6 +28,8 @@ import { tools as papertrailTools } from "./papertrail/tools.js";
 import { createHandlers as createPapertrailHandlers } from "./papertrail/handlers.js";
 import { tools as githubTools } from "./github/tools.js";
 import { createHandlers as createGithubHandlers } from "./github/handlers.js";
+import { tools as websiteTools } from "./website/tools.js";
+import { createHandlers as createWebsiteHandlers } from "./website/handlers.js";
 import { tools as aiaTools, opsTools as aiaOpsTools } from "./aia/tools.js";
 import { createHandlers as createAiaHandlers } from "./aia/handlers.js";
 import { GoogleAuth } from "google-auth-library";
@@ -43,6 +45,7 @@ export type ModuleScope =
   | "coadmin-api"
   | "papertrail"
   | "github"
+  | "website"
   | "aia";
 
 export interface CotributeMCPServerOptions {
@@ -62,6 +65,7 @@ export interface CotributeMCPServerOptions {
   coadminApiCreds?: { apiKey: string; apiSecret: string; clientId: string };
   papertrailToken?: string;
   githubToken?: string;
+  websiteDbPool?: Pool | null;
   aiaApiKey?: string;
   aiaBaseUrl?: string;
   aiaEnableOps?: boolean;
@@ -79,6 +83,7 @@ export class CotributeMCPServer {
   private instantlyAxios: AxiosInstance | null;
   private prodDbPool: Pool | null;
   private uatDbPool: Pool | null;
+  private websiteDbPool: Pool | null;
   private coadminAxios: AxiosInstance | null;
   private papertrailAxios: AxiosInstance | null;
   private githubAxios: AxiosInstance | null;
@@ -104,6 +109,7 @@ export class CotributeMCPServer {
       coadminApiCreds,
       papertrailToken,
       githubToken,
+      websiteDbPool,
       aiaApiKey,
       aiaBaseUrl,
       aiaEnableOps,
@@ -127,6 +133,7 @@ export class CotributeMCPServer {
     this.coadminAxios = null;
     this.papertrailAxios = null;
     this.githubAxios = null;
+    this.websiteDbPool = null;
     this.aiaAxios = null;
     this.aiaEnableOps = aiaEnableOps ?? false;
 
@@ -280,6 +287,13 @@ export class CotributeMCPServer {
       }
     }
 
+    // Website analytics module (GTM team) — the Supabase project shared by
+    // contribute-3.0 and webmaster.
+    if (scope === "website" && websiteDbPool) {
+      this.websiteDbPool = websiteDbPool;
+      Object.assign(this.handlers, createWebsiteHandlers(this.websiteDbPool));
+    }
+
     // coadmin-api module (CX support, per-individual)
     if (scope === "coadmin-api" && coadminApiBaseUrl && coadminApiCreds) {
       this.coadminAxios = axios.create({
@@ -402,6 +416,7 @@ export class CotributeMCPServer {
       ...(this.coadminAxios ? coadminApiTools : []),
       ...(this.papertrailAxios ? papertrailTools : []),
       ...(this.githubAxios ? githubTools : []),
+      ...(this.websiteDbPool ? websiteTools : []),
       ...(this.aiaAxios ? aiaTools : []),
       ...(this.aiaAxios && this.aiaEnableOps ? aiaOpsTools : []),
     ].map((tool: any) => ({

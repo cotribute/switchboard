@@ -29,6 +29,7 @@ src/
   coadmin-api/          # 16 tools — coadmin-api sysadmin reads with ciphertext decryption (CX support)
   papertrail/           # 2 tools  — Papertrail log search (CX support)
   github/               # 3 tools  — Cotribute monorepo code search + file access (CX support)
+  website/              # 8 tools  — cotribute.com traffic, attribution, leads, site chat (GTM)
 ```
 
 **How modules compose:** Each module exports a `tools` array and a `createHandlers(axiosInstance)` function. `server.ts` is scope-aware — only one module's tools and handlers are loaded per request, based on the URL path. Endpoint URL → scope → module exposed is 1:1.
@@ -48,6 +49,7 @@ All integrations are read-only. Each module is only registered when its env var(
 /coadmin-api/mcp       — CX support, per-individual
 /papertrail/mcp        — CX support, per-individual
 /github/mcp            — CX support, per-individual (Cotribute monorepo only)
+/website/mcp           — GTM team (cotribute.com analytics)
 ```
 
 All endpoints accept auth via `Authorization: Bearer <token>` header OR `:token` in the URL path. Token must match `MCP_API_KEY` (auth disabled if unset).
@@ -57,11 +59,40 @@ All endpoints accept auth via `Authorization: Bearer <token>` header OR `:token`
 | Scope                  | Connectors                                                                                        |
 | ---------------------- | ------------------------------------------------------------------------------------------------- |
 | Org-level (everyone)   | Gmail, Google Calendar, Google Drive, Slack                                                       |
-| GTM team               | `/dealfront/mcp`, `/pipedrive/mcp`, `/google-analytics/mcp`, `/instantly/mcp` (Switchboard)       |
+| GTM team               | `/dealfront/mcp`, `/pipedrive/mcp`, `/google-analytics/mcp`, `/instantly/mcp`, `/website/mcp` (Switchboard) |
 | CX team                | `/frontapp/mcp`, `/customerio/mcp` (Switchboard) + Anthropic GitHub Integration (general-purpose) |
 | CX individual profiles | `/heroku-postgres/mcp`, `/coadmin-api/mcp`, `/papertrail/mcp`, `/github/mcp` (Switchboard)        |
 
 The CX support endpoints (heroku-postgres, coadmin-api, papertrail, github) are deliberately per-individual: they access prod data, decrypt ciphertext, and read production logs. Do not add them to any shared org-wide configuration.
+
+## Website analytics (`/website/mcp`)
+
+Reads the Supabase project (`yuundkilrcyqbjvwtvlp`) shared by two Lovable repos:
+`cotribute/contribute-3.0` (the public site — owns the schema, 17 migrations under
+`supabase/migrations/`) and `cotribute/webmaster` (the admin portal — has no schema
+privileges and no service-role key; it reads through RLS with the logged-in admin's JWT).
+
+Three things are deliberate:
+
+- **Metric definitions are ports, not re-derivations.** The pure helpers in `src/website/`
+  — `channels.ts`, `chat-sessions.ts`, `chat-topics.ts`, `test-leads.ts`, `talk-page.ts`,
+  `report-day.ts`, `attr-report.ts` — are vendored verbatim from webmaster's `src/lib/`,
+  and `analytics.ts` ports `admin-metrics.functions.ts`. GTM reads both surfaces, so the
+  numbers have to agree. If the portal's copies change, re-copy them.
+- **Days are Eastern report-days**, not UTC calendar days, and a window opens at ET
+  midnight `days - 1` days ago so today is fully inside it. This is webmaster's
+  `windowStart()`; bucketing on UTC made every chart's last bar read as ~0.
+- **Two reconstructions the raw tables force.** The site writes `chat_messages` but never
+  `chat_sessions` rows, so conversations are derived with a 30-minute inactivity split;
+  and `leads` stores one row per action (`form_submit`, `meeting_booked`), so journey rows
+  are grouped into people by `visitor_id` before any limit applies.
+
+Access is a dedicated read-only Postgres role over the Supabase session pooler
+(`WEBSITE_DB_URL`) — never the service-role key. Direct connections have no `auth.uid()`,
+so that role needs `BYPASSRLS` (or explicit `TO claude_readonly` SELECT policies); with
+neither, every query returns zero rows rather than an error, which is exactly what the
+`latest_event_at` / `total_events_all_time` freshness probe on `web_dashboard_metrics`
+exists to expose.
 
 The Switchboard `/github/mcp` is scoped to the Cotribute monorepo (bot PAT, defaults to `GITHUB_DEFAULT_ORG`). It complements — does not replace — Anthropic's GitHub Integration, which uses user OAuth for general GitHub access.
 
@@ -160,6 +191,7 @@ git push heroku master    # Deploy to Heroku
 | `PAPERTRAIL_API_TOKEN`         | No       | Papertrail API token (for `/papertrail/mcp`)                        |
 | `GITHUB_TOKEN`                 | No       | GitHub fine-grained PAT (for `/github/mcp`)                         |
 | `GITHUB_DEFAULT_ORG`           | No       | Default GitHub org for `github_search_code` (default: `cotribute`)  |
+| `WEBSITE_DB_URL`               | No       | Website-analytics Supabase Postgres, read-only role (for `/website/mcp`) |
 
 ## Transport
 
